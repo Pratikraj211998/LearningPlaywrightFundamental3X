@@ -9,4 +9,3 @@ test('test', async ({ page }) => {
   await page.getByTestId('login-button').click();
   //await page.waitForTimeout(50000);
 });
-///Users/pratiksunilrajpure/Desktop/LearningPlaywrightFundamental3X/playwright-report
