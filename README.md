@@ -106,28 +106,62 @@ npx playwright install
 
 ## 4. Project structure
 
+This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, but only `01_Basics` and `02_TestAnnotations` have files in them so far:
+
 ```
-LearningPlaywrightFundamentals3x/
-├── tests/                     # numbered curriculum, one folder per topic (see section 5)
+LearningPlaywrightFundamental3X/
+├── tests/
 │   ├── 01_Basics/
-│   │   ├── 216_example.spec.ts       # title assertions on playwright.dev (viewer + admin)
-│   │   ├── 217_multiple_context.ts   # two isolated sessions in one browser
-│   │   ├── 218_normal_pw.ts          # raw library script: Browser -> Context -> Page
-│   │   ├── 219_tta-check.spec.ts     # login flow on the TTA practice site (codegen)
-│   │   ├── 220_BCP.spec.ts           # the three-level hierarchy, logged step by step
-│   │   ├── 221_TA.spec.ts            # three role contexts via the browser fixture
-│   │   └── 222_Test_Options.spec.ts  # viewport, locale, timezone, geolocation, mobile
+│   │   ├── 216_example.spec.ts          # title assertion on playwright.dev
+│   │   ├── 217_Multiple_Context.ts      # library script: two isolated sessions in one browser
+│   │   ├── 218_Normal_Playwright.ts     # library script: Browser -> Context -> Page
+│   │   ├── 219_tta-check.spec.ts        # login flow on the TTA practice site (codegen)
+│   │   ├── 220_BCP.spec.ts              # the three-level hierarchy, logged step by step
+│   │   ├── 221_TA.spec.ts               # three role contexts via the browser fixture
+│   │   └── 222.Test_Options.spec.ts     # viewport, locale, timezone, geolocation, mobile
 │   ├── 02_TestAnnotations/
 │   │   ├── 223_TestAnnotations.spec.ts  # skip, only, fail, fixme, slow
 │   │   └── 224_TestDescribe.spec.ts     # grouping tests with describe
-│   ├── 03_Locator_Commands/
-│   │   └── 225_LC.spec.ts
-│   └── 04_.. 23_/             # remaining topics, see the curriculum table
-├── docs/images/               # architecture diagram (png + html source)
-├── playwright.config.ts       # testDir, reporter, trace, headless, projects
+│   ├── 03_Locator_Commands/             # created, empty — not started yet
+│   ├── 04_Session_Storage/              # created, empty
+│   ├── 05_Allure_Reporting/             # created, empty
+│   ├── 06_Multiple_Element_Filter/      # created, empty
+│   ├── 07_WebTables/                    # created, empty
+│   ├── 08_Web_Select_Frames_Iframe/     # created, empty
+│   ├── 09_Frame_Iframe/                 # created, empty
+│   ├── 10_Keyboard_Hover_Drag_Drop_Calender/  # created, empty
+│   ├── 11_JS_Alerts/                    # created, empty
+│   ├── 12_Handle_SVG/                   # created, empty
+│   ├── 13_Shadow_DOM/                   # created, empty
+│   ├── 14_FileUpload/                   # created, empty
+│   ├── 15_File_Download/                # created, empty
+│   ├── 16_Scroll_toElement/             # created, empty
+│   ├── 17_Expect_Assertions/            # created, empty
+│   ├── 18_Test_hooks/                   # created, empty
+│   ├── 19_Data_Driven_Testing/          # created, empty
+│   ├── 20_Page_Object_Model/            # created, empty
+│   ├── 21_Fixture/                      # created, empty
+│   ├── 22_Misc_AI_Concepts/
+│   │   ├── 01_Playwright_MCP/
+│   │   ├── 02_Playwright_CLI/
+│   │   ├── 03_Playwright_AI_Agents/
+│   │   ├── 04_Selenium_To_PW_Migration/
+│   │   └── 05_SKILL_PW_36/
+│   └── 23_Advance_PW_Framework/         # created, empty
+├── notes/
+│   └── 01_Basics.md           # personal notes for topic 01
+├── docs/images/
+│   ├── playwright-architecture.png      # the diagram referenced earlier in this README
+│   ├── playwright-architecture.html
+│   ├── playwright-architecture2.html
+│   └── playwright-architecture3.html
+├── .vscode/
+│   └── settings.json           # Code Runner uses tsx for .ts library scripts
+├── tsconfig.json                # required for ts-node/Code Runner on the library scripts above
+├── playwright.config.ts         # testDir, reporter, trace, headless, projects
 ├── package.json
-├── playwright-report/         # generated HTML report (git ignored)
-├── test-results/               # traces, screenshots, videos (git ignored)
+├── playwright-report/           # generated HTML report (git ignored)
+├── test-results/                # traces, screenshots, videos (git ignored)
 └── README.md
 ```
 
@@ -211,6 +245,48 @@ npx playwright test --workers=1
 # run one topic folder from the curriculum
 npx playwright test tests/02_TestAnnotations
 ```
+
+### Targeting tests: folder, file, line, title
+
+Playwright treats any path-like argument as a filter, so these all combine with the flags above.
+
+```bash
+# every test under one topic folder (recurses into subfolders too)
+npx playwright test tests/01_Basics
+
+# every test under one folder, just listed, not run
+npx playwright test tests/01_Basics --list
+
+# one specific file inside a folder
+npx playwright test tests/01_Basics/216_example.spec.ts
+
+# one exact test, by file + line number where it's defined
+npx playwright test tests/01_Basics/216_example.spec.ts:3
+
+# one test, by title, scoped to a single file
+npx playwright test tests/01_Basics/216_example.spec.ts -g "has title"
+
+# one test, by title, scoped to a whole folder
+npx playwright test tests/02_TestAnnotations -g "Login Page"
+
+# a describe block's name also works with -g, since it's part of the title
+npx playwright test -g "Login Page"
+
+# several files or folders at once
+npx playwright test tests/01_Basics tests/03_Locator_Commands
+
+# everything except tests matching a pattern
+npx playwright test -g "mobile" --grep-invert
+```
+
+| Target | Command |
+|---|---|
+| Whole suite | `npx playwright test` |
+| One folder | `npx playwright test tests/<folder>` |
+| One file | `npx playwright test tests/<folder>/<file>.spec.ts` |
+| One line in a file | `npx playwright test tests/<folder>/<file>.spec.ts:<line>` |
+| One test by title | `npx playwright test -g "<title>"` |
+| One test, file-scoped | `npx playwright test <file> -g "<title>"` |
 
 The two library scripts in `01_Basics/` are not specs, so the runner skips them. Run those directly:
 

@@ -1,0 +1,1874 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Playwright End-to-End Architecture — Deep Research</title>
+<meta name="description" content="A deep, source-grounded walkthrough of Playwright's end-to-end architecture: the four layers, the internal channel protocol, the multi-process test runner, browser engine protocols (CDP / Juggler / WebKit), auto-waiting, and CI at scale." />
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("pw-arch-theme");
+      if (!t) {
+        t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+    }
+  })();
+</script>
+<style>
+  :root {
+    --accent: #2da44e;
+    --accent-2: #0969da;
+    --accent-3: #8250df;
+    --warn: #bf8700;
+    --danger: #cf222e;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  html[data-theme="light"] {
+    --bg: #ffffff;
+    --bg-soft: #f6f8fa;
+    --bg-inset: #eef1f5;
+    --text: #1f2328;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --border-soft: #e4e8ee;
+    --code-bg: #f6f8fa;
+    --code-text: #1f2328;
+    --shadow: 0 1px 2px rgba(31, 35, 40, 0.06), 0 8px 24px rgba(31, 35, 40, 0.06);
+    --topbar-bg: rgba(255, 255, 255, 0.86);
+    --proto-bg: #0a5cad;
+    --proto-fg: #ffffff;
+  }
+  html[data-theme="dark"] {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-inset: #1c2129;
+    --text: #e6edf3;
+    --muted: #9198a1;
+    --border: #30363d;
+    --border-soft: #262c34;
+    --code-bg: #161b22;
+    --code-text: #e6edf3;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
+    --topbar-bg: rgba(13, 17, 23, 0.82);
+    --accent: #3fb950;
+    --accent-2: #58a6ff;
+    --accent-3: #a371f7;
+    --warn: #d29922;
+    --danger: #f85149;
+    --proto-bg: #1f6feb;
+    --proto-fg: #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ---------- Top bar ---------- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 22px;
+    background: var(--topbar-bg);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; }
+  .topbar .logo {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 800;
+  }
+  .topbar .sep { color: var(--border); }
+  .topbar .sub { color: var(--muted); font-size: 13px; font-weight: 500; }
+  .topbar .spacer { flex: 1; }
+  .btn {
+    font: inherit; font-size: 13px; color: var(--text);
+    background: var(--bg-soft); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .btn:hover { border-color: var(--accent-2); }
+
+  /* ---------- Layout ---------- */
+  .layout { display: grid; grid-template-columns: 292px minmax(0, 1fr); align-items: start; max-width: 1500px; margin: 0 auto; }
+  .sidebar {
+    position: sticky; top: 51px; align-self: start;
+    height: calc(100vh - 51px); overflow-y: auto;
+    padding: 26px 14px 60px 22px;
+    border-right: 1px solid var(--border-soft);
+  }
+  .sidebar .toc-title { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px 8px; font-weight: 700; }
+  .sidebar ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+  .sidebar li { counter-increment: toc; }
+  .sidebar a {
+    display: block; color: var(--muted); font-size: 13.5px; padding: 6px 10px 6px 34px;
+    border-radius: 8px; position: relative; line-height: 1.35;
+  }
+  .sidebar a::before {
+    content: counter(toc); position: absolute; left: 8px; top: 6px;
+    width: 19px; height: 19px; border-radius: 6px; font-size: 11px;
+    display: grid; place-items: center; background: var(--bg-inset); color: var(--muted); font-weight: 700;
+  }
+  .sidebar a:hover { background: var(--bg-soft); color: var(--text); text-decoration: none; }
+  .sidebar a.active { background: var(--bg-soft); color: var(--text); font-weight: 600; }
+  .sidebar a.active::before { background: var(--accent); color: #fff; }
+
+  main { padding: 40px 46px 120px; max-width: 1000px; }
+
+  /* ---------- Hero ---------- */
+  .hero { margin-bottom: 40px; }
+  .eyebrow { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
+  h1 { font-size: clamp(30px, 4.4vw, 46px); line-height: 1.08; margin: 0 0 16px; letter-spacing: -0.025em; font-weight: 800; }
+  .lead { font-size: 19px; color: var(--muted); margin: 0 0 26px; max-width: 62ch; }
+  .lead code { font-size: 0.85em; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 26px; }
+  .stat { background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 14px 16px; }
+  .stat .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); font-weight: 700; }
+  .stat .v { font-size: 21px; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; }
+  .stat .n { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .note {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-2);
+    background: var(--bg-soft);
+    border-radius: var(--radius-sm);
+    padding: 14px 18px; font-size: 14.5px; color: var(--muted);
+  }
+  .note strong { color: var(--text); }
+
+  /* ---------- Sections ---------- */
+  section { padding-top: 30px; margin-bottom: 18px; }
+  h2 {
+    font-size: 27px; letter-spacing: -0.02em; margin: 0 0 6px; padding-top: 10px;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .num {
+    font-family: var(--mono); font-size: 14px; color: var(--accent);
+    border: 1px solid var(--border); border-radius: 7px; padding: 2px 8px; font-weight: 700;
+    background: var(--bg-soft);
+  }
+  h2 + .h2sub { color: var(--muted); font-size: 15px; margin: 0 0 22px; max-width: 70ch; }
+  h3 { font-size: 19px; margin: 30px 0 8px; letter-spacing: -0.01em; }
+  h4 { font-size: 15.5px; margin: 22px 0 6px; color: var(--text); }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin: 5px 0; }
+  li > ul, li > ol { margin-top: 5px; }
+
+  code {
+    font-family: var(--mono); font-size: 0.875em;
+    background: var(--bg-inset); color: var(--text);
+    padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border-soft);
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-text);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 18px; overflow-x: auto; margin: 14px 0 20px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.6;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: 13px; }
+  .codelabel {
+    display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.09em; margin: 4px 0 -6px; font-weight: 700;
+  }
+
+  /* ---------- Tables ---------- */
+  .tablewrap { overflow-x: auto; margin: 16px 0 22px; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  thead th { background: var(--bg-soft); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg-soft); }
+  td code, th code { font-size: 12px; }
+
+  /* ---------- Callouts ---------- */
+  .callout {
+    border: 1px solid var(--border); border-left: 4px solid var(--accent-2);
+    background: var(--bg-soft); border-radius: var(--radius-sm);
+    padding: 13px 18px; margin: 18px 0; font-size: 14.5px;
+  }
+  .callout .t { font-weight: 700; color: var(--text); display: block; margin-bottom: 3px; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.tip { border-left-color: var(--accent); }
+  .callout.danger { border-left-color: var(--danger); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* ---------- Layer stack diagram ---------- */
+  .stack { margin: 22px 0 26px; }
+  .layer {
+    display: grid; grid-template-columns: 132px 1fr; gap: 16px;
+    border: 1px solid var(--border); border-left: 5px solid var(--accent-2);
+    border-radius: var(--radius); padding: 14px 18px; margin-bottom: 9px;
+    background: var(--bg-soft);
+  }
+  .layer .lname { font-weight: 800; font-size: 14.5px; }
+  .layer .lname small { display: block; color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 2px; }
+  .layer .ldesc { font-size: 14px; color: var(--muted); }
+  .layer .ldesc strong { color: var(--text); }
+  .layer.l1 { border-left-color: var(--accent-3); }
+  .layer.l2 { border-left-color: var(--accent-3); }
+  .layer.l3 { border-left-color: var(--accent-2); }
+  .layer.l4 { border-left-color: var(--accent-2); }
+  .layer.l5 { border-left-color: var(--accent); }
+  .layer.l6 { border-left-color: var(--accent); }
+  .arrow { text-align: center; color: var(--muted); font-size: 13px; margin: -3px 0 6px; font-family: var(--mono); }
+
+  /* ---------- Full architecture diagram (figure + inline SVG) ---------- */
+  figure.diagram {
+    margin: 24px 0 30px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-soft);
+    padding: 18px 18px 8px;
+  }
+  figure.diagram .fighead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  figure.diagram .fighead .ft { font-weight: 800; font-size: 15px; }
+  figure.diagram .fighead .fs { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  .diagram-scroll { overflow-x: auto; }
+  svg.arch { display: block; width: 100%; height: auto; min-width: 720px; margin: 6px 0; }
+  svg.arch text { font-family: var(--sans); fill: var(--text); }
+  svg.arch .lane { fill: var(--bg-inset); opacity: 0.5; }
+  svg.arch .lane-b { fill: var(--bg-inset); opacity: 0.35; }
+  svg.arch .lanelabel { fill: var(--muted); font-size: 11.5px; font-weight: 800; letter-spacing: 0.11em; }
+  svg.arch .box { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+  svg.arch .box-p { stroke: var(--accent-3); stroke-width: 2; }
+  svg.arch .box-b { stroke: var(--accent-2); stroke-width: 2; }
+  svg.arch .box-g { stroke: var(--accent); stroke-width: 2; }
+  svg.arch .t { font-size: 15px; font-weight: 700; }
+  svg.arch .s { font-size: 12px; fill: var(--muted); }
+  svg.arch .n { font-size: 11px; fill: var(--muted); }
+  svg.arch .strip { fill: var(--proto-bg); }
+  svg.arch .stript { fill: var(--proto-fg); font-size: 13.5px; font-weight: 700; }
+  svg.arch .strips { fill: var(--proto-fg); font-size: 11.5px; opacity: 0.9; }
+  svg.arch .line { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+  svg.arch .line-3 { stroke: var(--accent-3); stroke-width: 2.2; fill: none; }
+  svg.arch .line-b { stroke: var(--accent-2); stroke-width: 2.2; fill: none; }
+  svg.arch .line-g { stroke: var(--accent); stroke-width: 2.2; fill: none; }
+  svg.arch .m { fill: var(--muted); }
+  svg.arch .m-3 { fill: var(--accent-3); }
+  svg.arch .m-b { fill: var(--accent-2); }
+  svg.arch .m-g { fill: var(--accent); }
+  figcaption {
+    font-size: 13px; color: var(--muted); border-top: 1px solid var(--border-soft);
+    margin-top: 10px; padding: 10px 2px 12px; line-height: 1.55;
+  }
+  figcaption strong { color: var(--text); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 4px; font-size: 12.5px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { width: 14px; height: 14px; border-radius: 4px; display: inline-block; border: 1px solid var(--border); }
+
+  /* Plain-language walkthrough cards */
+  .flow { list-style: none; counter-reset: flow; margin: 18px 0 8px; padding: 0; }
+  .flow li {
+    counter-increment: flow; position: relative;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-soft); padding: 13px 16px 13px 54px; margin-bottom: 9px;
+  }
+  .flow li::before {
+    content: counter(flow); position: absolute; left: 14px; top: 13px;
+    width: 26px; height: 26px; border-radius: 8px; background: var(--accent-2); color: #fff;
+    display: grid; place-items: center; font-weight: 800; font-size: 13px; font-family: var(--mono);
+  }
+  .flow li .q { font-weight: 700; display: block; }
+  .flow li .a { color: var(--muted); font-size: 14.5px; }
+  .flow li .a code { font-size: 0.85em; }
+
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0 22px; }
+  .card { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; background: var(--bg-soft); }
+  .card h4 { margin-top: 0; }
+  .card p:last-child { margin-bottom: 0; }
+  .card .tag { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+
+  /* ---------- Hop timeline ---------- */
+  .hops { list-style: none; margin: 20px 0; padding: 0; position: relative; }
+  .hops::before { content: ""; position: absolute; left: 18px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+  .hops li { position: relative; padding: 0 0 20px 52px; }
+  .hops li::before {
+    content: attr(data-n); position: absolute; left: 6px; top: 0;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 800; font-size: 13px;
+    display: grid; place-items: center; font-family: var(--mono);
+    box-shadow: 0 0 0 4px var(--bg);
+  }
+  .hops .h { font-weight: 700; }
+  .hops .h .where { font-family: var(--mono); font-size: 12px; color: var(--muted); font-weight: 600; }
+  .hops p { margin: 3px 0 0; font-size: 14.5px; color: var(--muted); }
+  .hops p strong { color: var(--text); }
+
+  /* ---------- Pills ---------- */
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+  .pill { font-size: 12.5px; font-family: var(--mono); border: 1px solid var(--border); background: var(--bg-soft); color: var(--muted); padding: 4px 11px; border-radius: 999px; }
+
+  hr { border: none; border-top: 1px solid var(--border-soft); margin: 40px 0; }
+
+  footer { border-top: 1px solid var(--border); padding: 30px 46px 60px; color: var(--muted); font-size: 13.5px; max-width: 1000px; margin: 0 auto; }
+  footer h3 { color: var(--text); font-size: 15px; }
+  footer ul { columns: 2; column-gap: 30px; }
+  @media (max-width: 760px) { footer ul { columns: 1; } }
+
+  .kicker { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
+
+  @media (max-width: 1080px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    main { padding: 30px 20px 90px; }
+    .twocol { grid-template-columns: 1fr; }
+  }
+  @media print {
+    .topbar, .sidebar { display: none; }
+    main { padding: 0; max-width: none; }
+    .layer, .card, pre, .tablewrap, .callout { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">PW</span> Playwright Architecture</div>
+  <span class="sep">/</span>
+  <span class="sub">End-to-end deep research</span>
+  <span class="spacer"></span>
+  <button class="btn" id="themeToggle" type="button" aria-label="Toggle color theme">
+    <span id="themeIcon">◐</span><span id="themeLabel">Theme</span>
+  </button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" aria-label="Table of contents">
+    <p class="toc-title">Contents</p>
+    <nav>
+      <ol>
+        <li><a href="#model">The mental model</a></li>
+        <li><a href="#layers">Four layers, two protocols</a></li>
+        <li><a href="#runner">The test runner</a></li>
+        <li><a href="#client">The client SDK</a></li>
+        <li><a href="#wire">The internal channel protocol</a></li>
+        <li><a href="#core">The core engine</a></li>
+        <li><a href="#engines">Browser engines &amp; dialects</a></li>
+        <li><a href="#journey">Journey of one click</a></li>
+        <li><a href="#objects">Browser, context, page</a></li>
+        <li><a href="#locators">Locators &amp; auto-waiting</a></li>
+        <li><a href="#network">The network layer</a></li>
+        <li><a href="#observability">Tracing &amp; tooling</a></li>
+        <li><a href="#ci">Scale &amp; CI</a></li>
+        <li><a href="#vs">Why the design wins</a></li>
+        <li><a href="#project">This project, mapped</a></li>
+        <li><a href="#debug">Debug index</a></li>
+        <li><a href="#glossary">Glossary</a></li>
+        <li><a href="#sources">Sources</a></li>
+      </ol>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <span class="eyebrow">Research topic · Browser automation internals</span>
+      <h1>Playwright End-to-End Architecture</h1>
+      <p class="lead">
+        What actually happens when a test runs <code>await page.click()</code>? Behind one line of
+        code sit a multi-process test runner, a proxy-based client SDK, a custom remote-procedure
+        protocol, a browser-agnostic engine, and three different browser debugging dialects. This page
+        traces that entire path — from config file to DOM node — and explains why each layer exists.
+      </p>
+
+      <div class="stats">
+        <div class="stat"><div class="k">Installed</div><div class="v">1.63.0</div><div class="n">@playwright/test</div></div>
+        <div class="stat"><div class="k">Engines</div><div class="v">3 + BiDi</div><div class="n">Chromium · Firefox · WebKit</div></div>
+        <div class="stat"><div class="k">Protocols</div><div class="v">2 layers</div><div class="n">Channel RPC + browser protocol</div></div>
+        <div class="stat"><div class="k">Runner</div><div class="v">Multi-process</div><div class="n">Runner + loader + workers</div></div>
+      </div>
+
+      <div class="note">
+        <strong>Scope &amp; grounding.</strong> This is a conceptual and implementation-level map of
+        the OSS Playwright stack, cross-checked against the version installed in this repository
+        (<code>@playwright/test 1.63.0</code>, <code>playwright-core 1.63.0</code>) and the internals
+        documented in the project source. Where a number is version-specific (browser revisions, default
+        timeouts), it is labelled as such.
+      </div>
+    </div>
+
+    <!-- ================= 1 ================= -->
+    <section id="model">
+      <h2><span class="num">01</span> The mental model</h2>
+      <p class="h2sub">Five ideas explain almost everything Playwright does. Read these first; the rest of the page is elaboration.</p>
+
+      <ol>
+        <li><strong>Client–server separation.</strong> Your test code holds <em>proxies</em>, not real browser objects. Every API call is a remote procedure call across a channel to a Node.js "driver" that owns the actual automation logic.</li>
+        <li><strong>One persistent, bidirectional connection.</strong> Client and driver hold a single long-lived connection (an in-process pipe for JS/TS, stdio for the bundled-driver languages, a WebSocket for remote). Commands flow down; <em>responses and events stream back up</em> continuously.</li>
+        <li><strong>Two protocol layers.</strong> An internal, YAML-defined "channel" RPC protocol connects client↔driver. A separate, native protocol — CDP, Juggler, or the WebKit Inspector protocol — connects driver↔browser.</li>
+        <li><strong>Waiting lives next to the browser.</strong> Actionability checks and auto-waiting run in the driver, not in your test process. That is why there is no polling code in your specs and no sleeps in disciplined suites.</li>
+        <li><strong>Processes, not threads.</strong> The test runner fans tests across OS worker processes. Isolation comes from fresh <code>BrowserContext</code>s (cheap, milliseconds) inside a shared browser process (expensive, once per worker).</li>
+      </ol>
+
+      <div class="callout tip">
+        <span class="t">The one-sentence version</span>
+        <p>A Playwright test is a <em>distributed program</em>: test intent is serialised into JSON-RPC,
+        translated by a Node.js driver into a browser's native debugging protocol, executed as real input
+        through the browser's own pipeline, and streamed back as events.</p>
+      </div>
+    </section>
+
+    <!-- ================= 2 ================= -->
+    <section id="layers">
+      <h2><span class="num">02</span> Four layers, two protocols</h2>
+      <p class="h2sub">Playwright is a client–server design with a clean separation between the user-facing API and the browser automation logic. The stack has four layers and two distinct protocol boundaries.</p>
+
+      <figure class="diagram">
+        <div class="fighead">
+          <span class="ft">Figure 1 — The whole stack on one page</span>
+          <span class="fs">follow the arrows top &#8594; bottom</span>
+        </div>
+        <div class="diagram-scroll">
+          <svg class="arch" viewBox="0 0 1000 1005" role="img" aria-labelledby="archTitle archDesc">
+            <title id="archTitle">Playwright end-to-end architecture</title>
+            <desc id="archDesc">Your test file is read by the runner process, which spawns worker processes. The client SDK inside a worker sends every call across the internal channel protocol to the Playwright driver, which translates it across the browser protocol into a real browser engine, then into the browser process and a per-tab renderer process.</desc>
+
+            <defs>
+              <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="m" d="M0,0 L10,5 L0,10 z" />
+              </marker>
+              <marker id="ah3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="m-3" d="M0,0 L10,5 L0,10 z" />
+              </marker>
+              <marker id="ahb" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="m-b" d="M0,0 L10,5 L0,10 z" />
+              </marker>
+              <marker id="ahg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="m-g" d="M0,0 L10,5 L0,10 z" />
+              </marker>
+            </defs>
+
+            <!-- ===== swimlanes ===== -->
+            <rect class="lane" x="8" y="34" width="984" height="596" rx="16" />
+            <text class="lanelabel" x="26" y="58">YOUR MACHINE &#183; ONE NODE.JS INSTALL</text>
+            <rect class="lane-b" x="8" y="706" width="984" height="290" rx="16" />
+            <text class="lanelabel" x="26" y="730">THE BROWSER</text>
+
+            <!-- ===== connectors (drawn first, so boxes sit on top) ===== -->
+            <!-- test file -> runner -->
+            <path class="line" d="M400,142 V166 H265 V184" marker-end="url(#ah)" />
+            <!-- test file -> worker -->
+            <path class="line" d="M600,142 V166 H735 V184" marker-end="url(#ah)" />
+            <text class="n" x="500" y="160" text-anchor="middle">npx playwright test</text>
+
+            <!-- worker -> client sdk -->
+            <path class="line-3" d="M735,276 V300" marker-end="url(#ah3)" />
+
+            <!-- client sdk -> driver, passes through the channel protocol strip -->
+            <path class="line-3" d="M735,392 V514" marker-end="url(#ah3)" />
+            <text class="n" x="748" y="414">every call crosses this wire</text>
+
+            <!-- driver -> engines, passes through the browser protocol strip -->
+            <path class="line-b" d="M500,620 V730" />
+            <path class="line-b" d="M195,730 H805" />
+            <path class="line-b" d="M195,730 V740" marker-end="url(#ahb)" />
+            <path class="line-b" d="M500,730 V740" marker-end="url(#ahb)" />
+            <path class="line-b" d="M805,730 V740" marker-end="url(#ahb)" />
+            <text class="n" x="512" y="636">one player, three dialects &#8594; normalised into one model</text>
+
+            <!-- engines -> browser process -->
+            <path class="line-g" d="M195,822 V836" />
+            <path class="line-g" d="M500,822 V836" />
+            <path class="line-g" d="M805,822 V836" />
+            <path class="line-g" d="M195,836 H805" />
+            <path class="line-g" d="M500,836 V844" marker-end="url(#ahg)" />
+
+            <!-- browser process -> renderer -->
+            <path class="line-g" d="M500,912 V932" marker-end="url(#ahg)" />
+
+            <!-- ===== row 1: your test file ===== -->
+            <rect class="box box-g" x="340" y="76" width="320" height="66" rx="12" />
+            <text class="t" x="500" y="104" text-anchor="middle">Your test file</text>
+            <text class="s" x="500" y="124" text-anchor="middle">checkout.spec.ts</text>
+
+            <!-- ===== row 2: runner + worker ===== -->
+            <rect class="box" x="80" y="190" width="370" height="86" rx="12" />
+            <text class="t" x="265" y="224" text-anchor="middle">Runner process</text>
+            <text class="s" x="265" y="246" text-anchor="middle">finds tests &#183; spawns workers &#183; collects results</text>
+
+            <rect class="box box-p" x="550" y="190" width="370" height="86" rx="12" />
+            <text class="t" x="735" y="224" text-anchor="middle">Worker process (Node.js)</text>
+            <text class="s" x="735" y="246" text-anchor="middle">runs your test code &#183; one test at a time</text>
+
+            <!-- ===== row 3: client sdk ===== -->
+            <rect class="box box-p" x="550" y="306" width="370" height="86" rx="12" />
+            <text class="t" x="735" y="340" text-anchor="middle">Client SDK — Page / Locator proxies</text>
+            <text class="s" x="735" y="362" text-anchor="middle">each call serialises to { guid, method, params }</text>
+
+            <!-- ===== protocol strip 1 ===== -->
+            <rect class="strip" x="80" y="430" width="840" height="52" rx="10" />
+            <text class="stript" x="500" y="452" text-anchor="middle">&#9312;  Internal channel protocol (JSON-RPC)</text>
+            <text class="strips" x="500" y="470" text-anchor="middle">one persistent connection &#183; in-memory pipe / stdio / WebSocket</text>
+
+            <!-- ===== row 4: the driver ===== -->
+            <rect class="box box-b" x="200" y="520" width="600" height="100" rx="12" />
+            <text class="t" x="500" y="562" text-anchor="middle">Playwright driver (Node.js server)</text>
+            <text class="s" x="500" y="584" text-anchor="middle">auto-waiting &#183; actionability checks &#183; selectors &#183; tracing &#183; network</text>
+
+            <!-- ===== protocol strip 2 ===== -->
+            <rect class="strip" x="80" y="650" width="840" height="52" rx="10" />
+            <text class="stript" x="500" y="672" text-anchor="middle">&#9313;  Browser protocol — the engine's own debugging channel</text>
+            <text class="strips" x="500" y="690" text-anchor="middle">CDP (Chromium) &#183; Juggler (Firefox) &#183; WebKit Inspector (WebKit)</text>
+
+            <!-- ===== row 5: engines ===== -->
+            <rect class="box box-b" x="55" y="744" width="280" height="78" rx="12" />
+            <text class="t" x="195" y="778" text-anchor="middle">Chromium</text>
+            <text class="s" x="195" y="798" text-anchor="middle">Chrome DevTools Protocol</text>
+
+            <rect class="box box-b" x="360" y="744" width="280" height="78" rx="12" />
+            <text class="t" x="500" y="778" text-anchor="middle">Firefox</text>
+            <text class="s" x="500" y="798" text-anchor="middle">Juggler (patched build)</text>
+
+            <rect class="box box-b" x="665" y="744" width="280" height="78" rx="12" />
+            <text class="t" x="805" y="778" text-anchor="middle">WebKit</text>
+            <text class="s" x="805" y="798" text-anchor="middle">WebKit Inspector (patched)</text>
+
+            <!-- ===== row 6 + 7: browser and renderer ===== -->
+            <rect class="box box-g" x="170" y="848" width="660" height="64" rx="12" />
+            <text class="t" x="500" y="876" text-anchor="middle">Browser process</text>
+            <text class="s" x="500" y="896" text-anchor="middle">windows &#183; profiles &#183; network stack &#183; input routing</text>
+
+            <rect class="box box-g" x="250" y="936" width="500" height="52" rx="12" />
+            <text class="t" x="500" y="958" text-anchor="middle">Renderer process (one per tab)</text>
+            <text class="s" x="500" y="976" text-anchor="middle">DOM &#183; page JavaScript &#183; hit-test &#8594; the real click</text>
+          </svg>
+        </div>
+
+        <div class="legend">
+          <span><i style="background: var(--accent-3)"></i> runs in Node.js — your side</span>
+          <span><i style="background: var(--accent-2)"></i> the driver &amp; engine dialects</span>
+          <span><i style="background: var(--accent)"></i> the actual browser</span>
+          <span><i style="background: var(--proto-bg)"></i> a protocol boundary</span>
+        </div>
+
+        <figcaption>
+          <strong>Read it top to bottom.</strong> One test file starts a run. The runner process reads it and
+          spawns worker processes; your test body executes inside a worker, holding only <em>proxies</em>.
+          Every call then crosses the <strong>internal channel protocol</strong> (&#9312;) into the driver — the
+          only place that knows how to wait, retry and check elements. The driver crosses the
+          <strong>browser protocol</strong> (&#9313;) into one of three engines, and the engine drives the real
+          browser process and a per-tab renderer, where the click finally lands on a DOM node.
+        </figcaption>
+      </figure>
+
+      <h3>In plain language — what each hop is doing</h3>
+      <ol class="flow">
+        <li>
+          <span class="q">You type <code>npx playwright test</code>.</span>
+          <span class="a">A Node.js process starts. This is the <em>runner</em>, and it never runs a line of your test — it only plans.</span>
+        </li>
+        <li>
+          <span class="q">The runner reads your config and finds your test files.</span>
+          <span class="a">It applies projects, filters and shards, then works out the final list of tests to run.</span>
+        </li>
+        <li>
+          <span class="q">It spawns worker processes and hands out the tests.</span>
+          <span class="a">Each worker is a separate OS process with its own memory. That is why tests cannot accidentally share state — and why <code>fullyParallel: true</code> can split a single file.</span>
+        </li>
+        <li>
+          <span class="q">Your test body runs inside a worker — but <code>page</code> is only a proxy.</span>
+          <span class="a">It holds a GUID and a connection, nothing more. <code>page.click()</code> just turns into a message.</span>
+        </li>
+        <li>
+          <span class="q">The message travels over one persistent connection to the driver.</span>
+          <span class="a">That is protocol &#9312;. It is a single long-lived channel, not one HTTP request per command — so the driver can also <em>push</em> events back at you instantly.</span>
+        </li>
+        <li>
+          <span class="q">The driver does the actual work.</span>
+          <span class="a">It resolves the locator against the live DOM, checks the element is attached, visible, stable, enabled and not covered, scrolls it into view, and retries all of that until the timeout. This is where "auto-waiting" lives.</span>
+        </li>
+        <li>
+          <span class="q">The driver speaks the browser's own language.</span>
+          <span class="a">That is protocol &#9313; — CDP for Chromium, Juggler for Firefox, the Inspector protocol for WebKit. Three dialects, one API.</span>
+        </li>
+        <li>
+          <span class="q">The click becomes a real mouse event at real coordinates.</span>
+          <span class="a">The browser process routes it to the tab's renderer, which hit-tests the point and delivers the event to whatever sits on top — exactly as a human click would.</span>
+        </li>
+        <li>
+          <span class="q">The result streams back up the same channel.</span>
+          <span class="a">Your promise resolves and the next line runs. Because events flow up continuously, assertions are cheap polls rather than blind sleeps.</span>
+        </li>
+      </ol>
+
+      <div class="stack">
+        <div class="layer l1">
+          <div class="lname">User API<small>Layer 1</small></div>
+          <div class="ldesc"><strong>Test + <code>expect</code> + fixtures</strong> (in <code>@playwright/test</code>), and the client classes <code>Browser</code>, <code>BrowserContext</code>, <code>Page</code>, <code>Frame</code>, <code>Locator</code>. Thin proxies that inherit from <code>ChannelOwner</code>.</div>
+        </div>
+        <div class="arrow">▲ ▼ &nbsp; in-memory channel / JSON-RPC</div>
+        <div class="layer l2">
+          <div class="lname">Protocol layer<small>Layer 2</small></div>
+          <div class="ldesc"><strong>The internal channel protocol.</strong> Defined in <code>protocol.yml</code>, generated into typed <code>channels.d.ts</code> and runtime <code>validator.ts</code>. Messages carry a <code>guid</code> identifying the target object.</div>
+        </div>
+        <div class="arrow">▲ ▼ &nbsp; client ↔ driver connection</div>
+        <div class="layer l3">
+          <div class="lname">Core engine<small>Layer 3 · server</small></div>
+          <div class="ldesc"><strong>Browser-agnostic automation logic.</strong> Server-side <code>Page</code>, <code>FrameManager</code>, <code>dom.ts</code>, plus <code>InjectedScript</code> injected into the page. Runs in the Node.js driver process.</div>
+        </div>
+        <div class="arrow">▲ ▼ &nbsp; native browser protocol</div>
+        <div class="layer l4">
+          <div class="lname">Engine drivers<small>Layer 4</small></div>
+          <div class="ldesc"><strong>Per-engine <code>PageDelegate</code> implementations</strong> that translate the unified model into CDP (Chromium), Juggler (Firefox), or the WebKit Inspector protocol — and into a real browser process.</div>
+        </div>
+      </div>
+
+      <p>The critical structural fact is the <strong>two-layer protocol design</strong>. Playwright deliberately keeps two protocols apart so the user-facing API never leaks engine quirks:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>Between</th><th>Protocol</th><th>Transport</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Internal channel protocol</strong></td>
+              <td>Playwright client code ↔ Playwright server (driver)</td>
+              <td>Custom YAML-defined JSON-RPC (<code>protocol.yml</code>)</td>
+              <td>In-process pipe, stdio, or WebSocket</td>
+            </tr>
+            <tr>
+              <td><strong>Browser protocol</strong></td>
+              <td>Playwright server ↔ the actual browser process</td>
+              <td>CDP · Juggler · WebKit Inspector · WebDriver BiDi</td>
+              <td>The engine's own debugging channel</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <span class="t">Why two protocols?</span>
+        <p>Write-once logic. Actionability, auto-waiting, selector engines, tracing, and network
+        interception are implemented once in the driver. Every language binding (JS/TS, Python, Java,
+        .NET) is a thin serialiser speaking the same channel protocol — so a wait behaves identically
+        everywhere and a bug fixed in the driver is fixed for all bindings.</p>
+      </div>
+    </section>
+
+    <!-- ================= 3 ================= -->
+    <section id="runner">
+      <h2><span class="num">03</span> Layer 1 — the test runner</h2>
+      <p class="h2sub">The runner is a small orchestrator in front of a pool of worker processes. Crucially, <em>the runner never executes a single line of your test</em>.</p>
+
+      <p>When you run <code>npx playwright test</code>, the runner:</p>
+      <ol>
+        <li>reads <code>playwright.config.ts</code> and resolves projects, filters, and shards;</li>
+        <li>discovers test files matching <code>testMatch</code> and compiles them (TypeScript → JavaScript);</li>
+        <li>builds a <code>Suite</code> tree and groups tests into dispatchable <code>TestGroup</code>s;</li>
+        <li>spawns worker processes and assigns groups to them;</li>
+        <li>collects IPC events and feeds them to reporters.</li>
+      </ol>
+
+      <h3>Process model: loader, dispatcher, workers</h3>
+      <p>Three roles cooperate, and each is a real OS process (or a host object wrapping one):</p>
+
+      <div class="twocol">
+        <div class="card">
+          <span class="tag">Loader</span>
+          <h4>Discovers &amp; compiles suites</h4>
+          <p>A dedicated loader process scans for files, applies the transform (Babel/TS), and builds the suite tree per project. Separating it keeps test discovery from blocking execution and lets it be watched for re-runs.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Dispatcher</span>
+          <h4>Schedules worker slots</h4>
+          <p><code>Dispatcher</code> keeps worker slots and a queue of <code>TestGroup</code>s. An inner per-job dispatcher translates each worker's IPC events into reporter calls. Re-scheduling runs after every state change to keep the queue draining.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Worker</span>
+          <h4>Runs the tests</h4>
+          <p><code>WorkerMain</code> is the root object in each worker subprocess. It executes one test at a time, with fresh test-scoped fixtures per test, and communicates with the dispatcher over structured IPC.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Reports</span>
+          <h4>Aggregates results</h4>
+          <p>Reporters (<code>list</code>, <code>html</code>, <code>blob</code>, <code>junit</code>, <code>github</code>, custom) receive lifecycle events — begin/end per test, per step, attachments — as the run progresses.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <span class="t">Scheduling rule</span>
+        <p>Tests from the <strong>same file</strong> run in the <strong>same worker process</strong> when possible
+        (same worker hash). That is what makes <code>beforeAll</code>/<code>afterAll</code> and
+        worker-scoped fixtures coherent. With <code>fullyParallel: true</code>, the unit of distribution
+        becomes the individual test, so two tests from one file can run simultaneously in different
+        processes.</p>
+      </div>
+
+      <h3>Worker lifecycle</h3>
+      <ol>
+        <li><strong>Initialisation</strong> — the worker sets <code>TEST_WORKER_INDEX</code> and <code>TEST_PARALLEL_INDEX</code> and receives its <code>WorkerInitParams</code>.</li>
+        <li><strong>Stdio redirection</strong> — <code>process.stdout</code>/<code>stderr</code> writes are overridden so console output is forwarded to the reporter as events and appended to the trace.</li>
+        <li><strong>Execution</strong> — the worker receives a <code>RunPayload</code> and executes the group's tests via <code>runTestGroup</code>, one at a time.</li>
+        <li><strong>Teardown</strong> — <code>gracefullyClose()</code> runs fixture teardowns (worker and test scope) and closes all browsers via <code>gracefullyCloseAll</code>.</li>
+      </ol>
+
+      <p>When a test fails, its worker is considered dirty: the process is torn down and a fresh worker boots to continue the remaining tests. Worker-scoped state must therefore always be rebuildable from scratch — the affected file's <code>beforeAll</code> runs again in the new worker.</p>
+
+      <h3>IPC payloads</h3>
+      <p>Workers and dispatcher exchange structured payloads (defined in the runner's <code>common/ipc.ts</code>):</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Payload</th><th>Purpose</th><th>Key fields</th></tr></thead>
+          <tbody>
+            <tr><td><code>RunPayload</code></td><td>Command to run a group of tests</td><td><code>file</code>, <code>entries</code> (test IDs / retries)</td></tr>
+            <tr><td><code>TestBeginPayload</code></td><td>Test started</td><td><code>testId</code>, <code>startWallTime</code></td></tr>
+            <tr><td><code>TestEndPayload</code></td><td>Test finished</td><td><code>status</code>, <code>errors</code>, <code>duration</code></td></tr>
+            <tr><td><code>StepBeginPayload</code></td><td>Step started</td><td><code>stepId</code>, <code>parentStepId</code>, <code>category</code></td></tr>
+            <tr><td><code>StepEndPayload</code></td><td>Step finished</td><td><code>stepId</code>, <code>error</code>, <code>attachments</code></td></tr>
+            <tr><td><code>AttachmentPayload</code></td><td>Attachment added</td><td><code>name</code>, <code>path</code>, <code>body</code>, <code>contentType</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Every step carries a <strong>category</strong>, which is what makes the HTML report and trace viewer legible:</p>
+      <div class="pills">
+        <span class="pill">hook</span>
+        <span class="pill">fixture</span>
+        <span class="pill">pw:api</span>
+        <span class="pill">test.step</span>
+        <span class="pill">expect</span>
+        <span class="pill">test.attach</span>
+      </div>
+      <p><code>pw:api</code> marks internal Playwright calls (e.g. <code>page.goto</code>), so the trace can show
+      the exact API call that produced each protocol action.</p>
+
+      <h3>Fixtures: dependency injection at the heart</h3>
+      <p>A test declares what it needs by destructuring its first argument. The runner's <code>FixtureRunner</code>
+      resolves exactly those dependencies, in dependency order, before the body runs, and unwinds them in
+      reverse afterwards — even when the test fails or times out.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Fixture</th><th>Scope</th><th>What you get</th></tr></thead>
+          <tbody>
+            <tr><td><code>page</code></td><td>test</td><td>A fresh <code>Page</code> in a fresh context for every test</td></tr>
+            <tr><td><code>context</code></td><td>test</td><td>The <code>BrowserContext</code> behind that page: isolated cookies, storage, permissions</td></tr>
+            <tr><td><code>browser</code></td><td>worker</td><td>One <code>Browser</code> instance shared by all tests in the worker</td></tr>
+            <tr><td><code>request</code></td><td>test</td><td>An <code>APIRequestContext</code> for HTTP calls that honours <code>baseURL</code></td></tr>
+            <tr><td><code>browserName</code></td><td>worker</td><td><code>'chromium' | 'firefox' | 'webkit'</code> for conditional logic</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>You extend the graph with <code>test.extend</code>. Two scopes matter: <strong>test-scoped</strong>
+      (built and destroyed per test — pages, seeded records) and <strong>worker-scoped</strong> (built once
+      per worker process and shared — API sessions, DB pools). A worker fixture cannot depend on a
+      test fixture. Auto fixtures (<code>{ auto: true }</code>) run for every test without being requested.</p>
+
+      <span class="codelabel">fixtures/index.ts</span>
+      <pre><code>import { test as base, expect, request } from '@playwright/test';
+
+type TestFixtures  = { authedPage: Page; testOrder: { id: string } };
+type WorkerFixtures = { apiToken: string };
+
+export const test = base.extend&lt;TestFixtures, WorkerFixtures&gt;({
+  // worker-scoped: created once per worker process, reused by its tests
+  apiToken: [async ({}, use) =&gt; {
+    const api = await request.newContext();
+    const res = await api.post('/api/auth/token', { data: { /* ... */ } });
+    const { token } = await res.json();
+    await api.dispose();
+    await use(token);
+  }, { scope: 'worker' }],
+
+  // test-scoped: teardown runs even when the test fails
+  authedPage: async ({ browser }, use) =&gt; {
+    const context = await browser.newContext({ storageState: '.auth/student.json' });
+    const page = await context.newPage();
+    await use(page);
+    await context.close();
+  },
+});</code></pre>
+
+      <p>Fixtures beat <code>beforeEach</code>/<code>afterEach</code> hooks on four axes: they are
+      <strong>composable</strong> (<code>extend</code> chains stack), <strong>lazy</strong> (only built when
+      requested), have <strong>guaranteed reverse-order teardown</strong>, and are <strong>overridable</strong>
+      per file or project (<code>test.use()</code>).</p>
+
+      <h3>The timeout hierarchy</h3>
+      <p>Four nested clocks run simultaneously. Debugging timeouts is miserable until you can name each one.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Clock</th><th>Set via</th><th>Default</th><th>Bounds</th></tr></thead>
+          <tbody>
+            <tr><td>Test timeout</td><td><code>timeout</code> / <code>test.setTimeout()</code></td><td>30&nbsp;s</td><td>One whole test: body, each hook, test-scoped fixture setup/teardown</td></tr>
+            <tr><td>Expect timeout</td><td><code>expect: { timeout }</code></td><td>5&nbsp;s</td><td>One auto-retrying assertion (<code>toBeVisible()</code>…)</td></tr>
+            <tr><td>Action timeout</td><td><code>use.actionTimeout</code></td><td>unset (capped by test)</td><td>One action's actionability wait: <code>click()</code>, <code>fill()</code></td></tr>
+            <tr><td>Navigation timeout</td><td><code>use.navigationTimeout</code></td><td>unset (capped by test)</td><td><code>goto()</code>, <code>reload()</code>, <code>waitForURL()</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <span class="t">The nesting explains two classic mysteries</span>
+        <p>A stuck click with no action timeout does not fail as a click — it silently eats the whole budget
+        and dies as <em>"Test timeout of 30000ms exceeded"</em>. And an assertion against a slow page fails in
+        5&nbsp;s even though the test had 25 to spare, because the expect clock is separate. Sane ordering:
+        expect &lt; action &lt; navigation &lt; test.</p>
+      </div>
+    </section>
+
+    <!-- ================= 4 ================= -->
+    <section id="client">
+      <h2><span class="num">04</span> Layer 2 — the client SDK</h2>
+      <p class="h2sub">Inside a worker, the objects your test holds are nearly hollow. Each wraps a GUID and a connection reference.</p>
+
+      <p>The client classes — <code>Page</code>, <code>BrowserContext</code>, <code>Frame</code>,
+      <code>Locator</code> — all inherit from <code>ChannelOwner</code>. The key implementation detail is that
+      <code>ChannelOwner</code> exposes a <code>_channel</code> property that is a JavaScript
+      <code>Proxy</code>. Calling a method on it intercepts the call, serialises it, and sends it over the
+      connection as a JSON-RPC message.</p>
+
+      <p>So this line:</p>
+      <pre><code>await page.getByRole('button', { name: 'Place order' }).click();</code></pre>
+
+      <p>does exactly one thing over the wire: it serialises your intent into a message of the form
+      <code>{ guid, method: 'click', params }</code> and returns a promise that resolves when a matching
+      response arrives.</p>
+
+      <div class="callout">
+        <span class="t">Two consequences you feel every day</span>
+        <p><strong>Every Playwright call is async because every call is a remote procedure call</strong> — nothing
+        executes locally in your process. And a locator like <code>getByRole(...)</code> is just a stored
+        <em>description</em>: nothing crosses the wire until an action or assertion uses it, at which point the
+        selector is resolved fresh against the live DOM. That per-action re-resolution is why stale element
+        references are essentially absent from Playwright.</p>
+      </div>
+
+      <h3>The transports</h3>
+      <p>Where the connection physically lives depends on the language binding. The <em>conversation</em> never changes.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Setup</th><th>Transport between client and driver</th></tr></thead>
+          <tbody>
+            <tr><td>JS / TS with <code>@playwright/test</code></td><td>Client and driver share one Node process; the "wire" is an in-memory pipe</td></tr>
+            <tr><td>Python / Java / .NET bindings</td><td>Bundle a Node runtime, spawn the driver as a child process, speak the protocol over stdio</td></tr>
+            <tr><td><code>browserType.connect()</code></td><td>A real WebSocket to a driver on another machine (remote / containerised browsers)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= 5 ================= -->
+    <section id="wire">
+      <h2><span class="num">05</span> The internal channel protocol</h2>
+      <p class="h2sub">This is the load-bearing wire between client and driver — a single source of truth in YAML, a generated validator, and a Dispatcher on the far side.</p>
+
+      <h3>protocol.yml → generated code</h3>
+      <p>The single source of truth is <code>protocol.yml</code>. It defines every channel interface,
+      command, event, and shared data type. A generator script parses it to produce implementation-ready
+      code, so client and server can never drift out of sync:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Generated file</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>channels.d.ts</code></td><td>TypeScript interfaces for every channel, command, event, and initializer</td></tr>
+            <tr><td><code>validator.ts</code></td><td>Runtime validation of protocol messages against the schema</td></tr>
+            <tr><td><code>protocolMetainfo.ts</code></td><td>Maps methods to metadata (<code>internal</code>, <code>title</code>, <code>pause</code>) for tracing/debugging</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Each channel carries <strong>commands</strong> (client→server), <strong>events</strong> (server→client),
+      and <strong>initializers</strong> (state sent when an object is created). Channels form a tree rooted at
+      <code>Root</code>: a parent creates children and returns their GUIDs as part of command results or
+      initializers.</p>
+
+      <h3>Message types</h3>
+      <p>Every message is a JSON object. There are exactly three kinds:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Kind</th><th>Direction</th><th>Key fields</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Command</strong></td><td>Client → Server</td><td><code>id</code>, <code>guid</code>, <code>method</code>, <code>params</code>, <code>metadata</code></td></tr>
+            <tr><td><strong>Command reply</strong></td><td>Server → Client</td><td><code>id</code>, plus <code>result</code> or <code>error</code></td></tr>
+            <tr><td><strong>Event</strong></td><td>Server → Client</td><td><code>guid</code>, <code>method</code>, <code>params</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The <code>guid</code> uniquely identifies which channel object on the server the message targets.
+      Objects are registered in the client <code>Connection</code> map and the server
+      <code>DispatcherConnection</code> map.</p>
+
+      <h3>The Dispatcher pattern</h3>
+      <p>On the server side, every client <code>ChannelOwner</code> has a corresponding <code>Dispatcher</code>
+      subclass. The dispatcher is the bridge between the protocol and the server's internal domain logic
+      (<code>SdkObject</code>). It does three things:</p>
+      <ul>
+        <li><strong>Executes commands</strong> — implements the methods declared in <code>protocol.yml</code>.
+          For example, <code>PageDispatcher.goto</code> receives a command and calls the server-side
+          <code>Page</code>.</li>
+        <li><strong>Dispatches events</strong> — pushes server-side events (e.g. <code>Page.Events.Close</code>)
+          back to the client.</li>
+        <li><strong>Manages resources</strong> — <code>_dispose</code> recursively cleans up child dispatchers
+          and tells the client to remove the corresponding objects.</li>
+      </ul>
+
+      <span class="codelabel">Request flow · page.goto(url)</span>
+      <pre><code>test code        page.goto(url)
+   │
+   ├─ 1  client Page (ChannelOwner) intercepts via the _channel Proxy
+   ├─ 2  serialises: { guid, method: "goto", params: { url, options } }
+   ├─ 3  Connection sends the JSON-RPC command to the server
+   │
+   ├─ 4  server Connection routes it to the target PageDispatcher
+   ├─ 5  validator.ts checks params against channels.PageGotoParams
+   ├─ 6  PageDispatcher calls server Page.goto(...)
+   ├─ 7  server Page delegates to its FrameManager → frame.goto()
+   ├─ 8  Frame calls page.delegate.navigateFrame()   ← engine-specific
+   ├─ 9  CRPage translates that into CDP Page.navigate → real browser process
+   │
+   └─ 10 response (with a Response object) travels back up; the promise resolves</code></pre>
+
+      <h3>Remote connections</h3>
+      <p>For browsers on another machine, Playwright exposes a server that speaks the same protocol over a
+      WebSocket:</p>
+      <ul>
+        <li><strong>WSServer</strong> handles the WebSocket upgrade and client validation.</li>
+        <li><strong>PlaywrightConnection</strong> manages a single client connection's lifecycle and enforces
+          <code>maxConnections</code> with a semaphore.</li>
+        <li><strong>DispatcherConnection</strong> routes JSON-RPC messages to the server-side
+          <code>PlaywrightDispatcher</code>. If the transport closes, all allocated resources are cleaned up
+          and pending operations are stopped.</li>
+      </ul>
+    </section>
+
+    <!-- ================= 6 ================= -->
+    <section id="core">
+      <h2><span class="num">06</span> Layer 3 — the core engine</h2>
+      <p class="h2sub">The core engine implements the actual automation logic in a browser-agnostic way — this is where <code>click</code> stops being one operation.</p>
+
+      <p>It runs in the Node.js driver process and coordinates all automation. The most important pieces:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Component</th><th>Responsibility</th></tr></thead>
+          <tbody>
+            <tr><td>Server <code>BrowserContext</code></td><td>An isolated session: creates/tracks pages, manages permissions, holds request interceptors for global routing, integrates the tracing system.</td></tr>
+            <tr><td>Server <code>Page</code></td><td>Central coordinator for a tab. Delegates engine-specific operations to a <code>PageDelegate</code>; owns lifecycle events (<code>Close</code>, <code>Crash</code>, <code>Download</code>); coordinates raw mouse/keyboard/touch input.</td></tr>
+            <tr><td><code>FrameManager</code> / <code>Frame</code></td><td>Tracks the frame tree (main frame + iframes), handles attach/detach, tracks navigation lifecycle (<code>load</code>, <code>networkidle</code>), and owns signal barriers so a click waits for resulting navigations to settle.</td></tr>
+            <tr><td><code>dom.ts</code></td><td>Server-side DOM primitives: <code>FrameExecutionContext</code> (evaluate JS in a frame) and <code>ElementHandle</code>.</td></tr>
+            <tr><td><code>InjectedScript</code></td><td>A small JS bundle injected into the page's own context. Provides low-level DOM querying, selector evaluation, and actionability primitives such as <code>isElementVisible</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <span class="t">Two "injected" halves</span>
+        <p>It helps to distinguish two injections. The <strong>InjectedScript</strong> is JavaScript Playwright
+        runs <em>inside the page</em> to query and inspect the DOM. But the actual <em>click</em> does not go
+        through page JavaScript — it travels through the browser's genuine input pipeline (see the journey
+        below). The injected script observes and measures; the protocol dispatches real input.</p>
+      </div>
+
+      <h3>The PageDelegate seam</h3>
+      <p>Every browser engine implements a <code>PageDelegate</code> interface. This is the seam that lets the
+      core engine stay engine-agnostic. The delegate defines methods for:</p>
+      <ul>
+        <li><strong>Input</strong> — <code>rawMouse</code>, <code>rawKeyboard</code>, <code>rawTouchscreen</code></li>
+        <li><strong>Navigation</strong> — <code>navigateFrame</code>, <code>reload</code>, <code>goBack</code>, <code>goForward</code></li>
+        <li><strong>Rendering</strong> — <code>takeScreenshot</code>, <code>updateEmulatedViewportSize</code>, <code>updateEmulateMedia</code></li>
+        <li><strong>DOM bridge</strong> — <code>adoptElementHandle</code>, <code>getContentFrame</code>, <code>setInputFilePaths</code></li>
+      </ul>
+      <p>Concrete classes — <code>CRPage</code> (Chromium), <code>FFPage</code> (Firefox), <code>WKPage</code>
+      (WebKit) — translate these into their engine's native protocol commands.</p>
+    </section>
+
+    <!-- ================= 7 ================= -->
+    <section id="engines">
+      <h2><span class="num">07</span> Layer 4 — browser engines &amp; dialect protocols</h2>
+      <p class="h2sub">Below the driver, uniformity ends. The three engines speak three different automation dialects, shipped as Playwright-patched builds.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Engine</th><th>Wire protocol</th><th>Ships as</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Chromium</strong></td>
+              <td>Chrome DevTools Protocol (CDP)</td>
+              <td>Stock capability of every Chromium build — which is why <code>channel: 'chrome'</code> / <code>'msedge'</code> can drive an installed browser.</td>
+            </tr>
+            <tr>
+              <td><strong>Firefox</strong></td>
+              <td>Juggler — a Playwright-specific protocol</td>
+              <td>A patched build downloaded by <code>npx playwright install</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>WebKit</strong></td>
+              <td>WebKit Inspector Protocol (extended)</td>
+              <td>A patched build — how you test the Safari engine on Windows or Linux.</td>
+            </tr>
+            <tr>
+              <td><strong>Any (experimental)</strong></td>
+              <td>WebDriver BiDi</td>
+              <td>An emerging standard, supported via <code>BidiBrowser</code>/<code>BidiPage</code> using namespaces such as <code>browsingContext</code>, <code>network</code>, <code>log</code>, <code>script</code>, and <code>input</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <span class="t">Patched builds are not optional</span>
+        <p>Pointing Playwright at a self-installed Firefox or Safari fails, because stock builds lack the
+        Juggler and inspection hooks. The sanctioned exception is <code>channel: 'chrome'</code> /
+        <code>'msedge'</code>, since every Chromium ships CDP. For Firefox and WebKit, always use the builds
+        from <code>npx playwright install</code>.</p>
+      </div>
+
+      <h3>The browser registry — this project's actual revisions</h3>
+      <p>The authoritative version source is <code>browsers.json</code> in <code>playwright-core</code>. Each
+      entry carries a <code>revision</code>, a user-facing <code>browserVersion</code>, and an
+      <code>installByDefault</code> flag; some platforms get <code>revisionOverrides</code>. The table below
+      is read directly from the 1.63.0 install in this repository:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Name</th><th>Revision</th><th>Browser version</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>chromium</code></td><td>1243</td><td>153.0.8010.12</td><td>Chrome for Testing</td></tr>
+            <tr><td><code>chromium-headless-shell</code></td><td>1243</td><td>153.0.8010.12</td><td>Lightweight headless shell</td></tr>
+            <tr><td><code>firefox</code></td><td>1543</td><td>155.0</td><td>Patched, Juggler</td></tr>
+            <tr><td><code>webkit</code></td><td>2359</td><td>26.6</td><td><code>revisionOverrides</code> for mac14 / mac14-arm64 → 2251</td></tr>
+            <tr><td><code>ffmpeg</code></td><td>1011</td><td>—</td><td>Video recording</td></tr>
+            <tr><td><code>winldd</code></td><td>1007</td><td>—</td><td>Windows dependency check (not installed by default)</td></tr>
+            <tr><td><code>android</code></td><td>1001</td><td>—</td><td>Android automation (not installed by default)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Device emulation profiles live in <code>deviceDescriptorsSource.json</code>: each profile carries
+      <code>userAgent</code>, <code>viewport</code>, <code>deviceScaleFactor</code>, <code>isMobile</code>,
+      <code>hasTouch</code>, and a <code>defaultBrowserType</code> (e.g. <code>chromium</code> for a Galaxy,
+      <code>webkit</code> for an iPhone).</p>
+
+      <h3>Browser process vs renderer process</h3>
+      <p>Take the Chromium path to the finish. The driver emits a mouse-event command over CDP, and it lands
+      in the <strong>browser process</strong>: the privileged coordinator that owns windows, profiles, the
+      network stack, and input routing. Your page does not live there. Each tab (roughly, each cross-origin
+      frame tree) runs in its own sandboxed <strong>renderer process</strong> holding the DOM, running page
+      JavaScript, and doing layout and paint.</p>
+      <p>The browser process forwards <code>mousePressed</code>/<code>mouseReleased</code> to the right
+      renderer, which hit-tests those coordinates against its layout tree: whatever node sits topmost at that
+      point receives <code>pointerdown</code>, <code>mousedown</code>, focus, <code>mouseup</code>, and
+      <code>click</code>, bubbling exactly as a human click would.</p>
+
+      <div class="callout tip">
+        <span class="t">Why an overlapping banner matters</span>
+        <p>Notice what never happened: Playwright did not call <code>element.click()</code> from page
+        JavaScript. It sent coordinates through the browser's genuine input pipeline. If a cookie banner
+        overlaps your button, the banner gets the click — which is precisely why the driver checks the hit
+        target <em>before</em> dispatching.</p>
+      </div>
+    </section>
+
+    <!-- ================= 8 ================= -->
+    <section id="journey">
+      <h2><span class="num">08</span> The end-to-end journey of one click</h2>
+      <p class="h2sub">Every Playwright test funnels through lines like <code>await page.click()</code>. On screen it is one statement. Under the hood it crosses five process boundaries and is translated between protocols twice.</p>
+
+      <span class="codelabel">checkout.spec.ts — one test, annotated with the hops it triggers</span>
+      <pre><code>import { test, expect } from '@playwright/test';
+
+test('student places an order', async ({ page }) =&gt; {
+  // This body runs inside a WORKER process. "page" is a client-side proxy:
+  // a GUID plus a channel, with zero browser logic inside it.
+  await page.goto('https://app.thetestingacademy.com/playwright/');
+
+  // client → driver: { guid, method: "goto", params }. The driver issues the
+  // engine-level navigation and holds the promise until "load" streams back.
+  await page.getByRole('button', { name: 'Place order' }).click();
+
+  // The locator was only a description until this line. One message carries
+  // selector + action; the driver resolves the node fresh, runs actionability
+  // checks, then dispatches a raw mouse event at real coordinates.
+  await expect(page.getByTestId('order-status')).toHaveText('Confirmed');
+  // Web-first assertion: the driver re-queries the DOM until it matches or times out.
+});</code></pre>
+
+      <ol class="hops">
+        <li data-n="1">
+          <div class="h">The runner and its worker processes <span class="where">runner process</span></div>
+          <p>The process you start with <code>npx playwright test</code> reads the config, builds the test
+          list after applying projects and shards, then spawns workers: plain Node.js child processes, one per
+          parallel slot. The runner orchestrates over IPC and <strong>never runs a line of your test</strong>.
+          Parallelism means more processes, not threads — so tests cannot accidentally share in-memory state.</p>
+        </li>
+        <li data-n="2">
+          <div class="h">The client SDK, an API made of proxies <span class="where">inside the worker</span></div>
+          <p>The objects your test holds come from the client half of <code>playwright-core</code> and are
+          nearly hollow. <code>page.click()</code> does one thing: serialise your intent into
+          <code>{ guid, method, params }</code>, write it to the channel, and return a promise.</p>
+        </li>
+        <li data-n="3">
+          <div class="h">One persistent connection, not many requests <span class="where">transport</span></div>
+          <p>A single persistent, bidirectional connection carries the JSON traffic. In JS/TS the wire is an
+          in-memory pipe; the Python/Java/.NET bindings speak the identical protocol over stdio; and
+          <code>connect()</code> swaps in a WebSocket for remote browsers. Commands go down; responses and a
+          <strong>continuous stream of events</strong> come up.</p>
+        </li>
+        <li data-n="4">
+          <div class="h">The driver, where the intelligence lives <span class="where">driver process (Node.js)</span></div>
+          <p>The far end is the Playwright server. Its dispatcher map resolves your GUID to the real
+          server-side page object, and here <code>click</code> stops being one operation. The driver runs the
+          <strong>actionability loop</strong>: is the element attached, visible, stable (same box across two
+          frames), enabled, and the actual hit target? It scrolls it into view, computes coordinates, does a
+          final hit-target check, and only then dispatches input — retrying until the action timeout.</p>
+        </li>
+        <li data-n="5">
+          <div class="h">Three engines, three protocol dialects <span class="where">driver → browser</span></div>
+          <p>Chromium over CDP; Firefox over Juggler (patched); WebKit over the WebKit Inspector protocol
+          (patched). The driver normalises all three dialects into one internal model — how a single API
+          delivers identical semantics across engines.</p>
+        </li>
+        <li data-n="6">
+          <div class="h">Browser process, renderer process, DOM node <span class="where">the browser</span></div>
+          <p>The driver emits a raw mouse event with real coordinates. The browser process routes it to the
+          tab's renderer, which hit-tests it against its layout tree. The topmost node receives the full event
+          sequence and bubbles it. The result, plus any events the click caused, streams back up the same
+          connection — and your promise resolves.</p>
+        </li>
+      </ol>
+
+      <h3>The whole path in one table — read the last column as a debugging index</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Lives in</th><th>Its one job</th><th>What breaks there</th></tr></thead>
+          <tbody>
+            <tr><td>Test runner</td><td>Runner process (Node.js)</td><td>Discover tests, spawn workers, aggregate results</td><td>Config mistakes, "no tests found", shard/filter errors</td></tr>
+            <tr><td>Worker</td><td>Node.js child process</td><td>Execute test code with fresh fixtures per test</td><td>Test timeouts, fixture failures, crashed workers → retries</td></tr>
+            <tr><td>Client SDK</td><td>Inside the worker</td><td>Serialise each API call against an object GUID</td><td>Missing <code>await</code>, acting on a closed page ("target closed")</td></tr>
+            <tr><td>Transport</td><td>Pipe or WebSocket</td><td>Carry commands down, responses + events up</td><td>Dropped connections when the browser/container dies mid-run</td></tr>
+            <tr><td>Driver</td><td>Node.js server process</td><td>Translate intent; actionability &amp; auto-wait</td><td>Actionability timeouts: covered elements, endless animations, detached nodes</td></tr>
+            <tr><td>Automation protocol</td><td>CDP / Juggler / WebKit</td><td>Engine-specific control channel</td><td>Version drift, unpatched system browsers</td></tr>
+            <tr><td>Browser process</td><td>The browser</td><td>Own contexts, tabs, network; route input</td><td>Crashes, OOM kills in CI, sandbox issues in Docker</td></tr>
+            <tr><td>Renderer process</td><td>One per tab</td><td>Hold the DOM, run page JS, hit-test the click</td><td>Overlays swallowing clicks, hydration races, re-renders detaching nodes</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= 9 ================= -->
+    <section id="objects">
+      <h2><span class="num">09</span> Browser, context, page — the isolation model</h2>
+      <p class="h2sub">Most of Playwright's speed and reliability is decided here, not in your test code. Three nested objects, three precise jobs.</p>
+
+      <div class="stack">
+        <div class="layer l5">
+          <div class="lname">Browser<small>heavy · per worker</small></div>
+          <div class="ldesc">A real browser process, launched once and controlled over a single driver connection. Starting one costs from half a second to several seconds — by far the most expensive thing Playwright does.</div>
+        </div>
+        <div class="layer l5">
+          <div class="lname">BrowserContext<small>cheap · per test</small></div>
+          <div class="ldesc">A freshly wiped incognito profile inside that process: its own cookies, localStorage, sessionStorage, cache, permissions, and network rules. Nothing leaks across contexts. <strong>Creating one spawns no new process.</strong></div>
+        </div>
+        <div class="layer l6">
+          <div class="lname">Page<small>cheap · per test</small></div>
+          <div class="ldesc">A tab inside a context. Owns the DOM, a main frame plus iframes, and its own console and network streams. Popups land in the same context — which is why a login popup shares cookies with its opener.</div>
+        </div>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Object</th><th>Cost to create</th><th>Owns</th><th>Right lifetime</th></tr></thead>
+          <tbody>
+            <tr><td><code>Browser</code></td><td>Heavy: full process launch</td><td>Rendering engine plus every context inside it</td><td>One per worker, reused across tests</td></tr>
+            <tr><td><code>BrowserContext</code></td><td>Milliseconds</td><td>Cookies, storage, cache, permissions, emulation, routes, HAR</td><td>One per test, always fresh</td></tr>
+            <tr><td><code>Page</code></td><td>Milliseconds</td><td>A tab: DOM, frames, console and network streams</td><td>One or a few per test</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>This split is the whole trick behind Playwright's speed. The runner launches one browser per worker
+      process, then hands every test a brand-new context. You get the isolation of a cold start — no leaked
+      login state, no cookies from the previous test, no cache lying to you — at the price of opening a tab.
+      In <code>@playwright/test</code> this is the default: the <code>page</code> fixture you destructure
+      already lives inside a fresh context built for that one test.</p>
+
+      <h3>Emulation belongs to the context</h3>
+      <p>Because the context <em>is</em> the profile, emulation lives on the context: viewport, device
+      descriptor, locale, timezone, geolocation, colour scheme, reduced motion, offline mode, granted
+      permissions. Two contexts in the same worker can simultaneously be a mobile user in one locale on a
+      dark theme and a desktop user in another, without touching each other.</p>
+
+      <span class="codelabel">test.use() merges options into the context the runner builds</span>
+      <pre><code>test.use({
+  ...devices['Pixel 7'],
+  locale: 'en-IN',
+  timezoneId: 'Asia/Kolkata',
+  permissions: ['geolocation'],
+  colorScheme: 'dark',
+});</code></pre>
+
+      <h3>Connecting to browsers</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>API</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>browserType.launch()</code></td><td>Starts a local browser process and connects the resulting <code>Browser</code>.</td></tr>
+            <tr><td><code>browserType.connect()</code></td><td>Attaches to a remote <code>PlaywrightServer</code> over WebSocket.</td></tr>
+            <tr><td><code>browserType.connectOverCDP()</code></td><td>Connects to an existing Chromium instance using CDP.</td></tr>
+            <tr><td><code>browserType.launchPersistentContext()</code></td><td>Launches a browser and a context backed by an on-disk <code>userDataDir</code> — state persists across restarts.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Auth reuse: <code>storageState</code></h3>
+      <p>Never log in through the UI at the top of every test. Authenticate once, save the browser's storage
+      (cookies + localStorage) to a JSON file with <code>storageState</code>, then start every context
+      preloaded from that file. In <code>@playwright/test</code> the best home for the one-time login is a
+      <strong>setup project</strong> that the browser projects depend on:</p>
+
+      <span class="codelabel">tests/auth.setup.ts</span>
+      <pre><code>import { test as setup, expect } from '@playwright/test';
+
+setup('authenticate as student', async ({ page }) =&gt; {
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(process.env.STUDENT_EMAIL!);
+  await page.getByLabel('Password').fill(process.env.STUDENT_PASSWORD!);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/dashboard/);
+  await page.context().storageState({ path: '.auth/student.json' });
+});</code></pre>
+
+      <div class="callout danger">
+        <span class="t">Treat <code>.auth/</code> as radioactive</span>
+        <p>The JSON holds live session cookies and tokens: gitignore the folder, regenerate it on every CI
+        run, and keep one file per role. A state file that expires mid-run fails as a confusing wall of
+        redirects to <code>/login</code>.</p>
+      </div>
+    </section>
+
+    <!-- ================= 10 ================= -->
+    <section id="locators">
+      <h2><span class="num">10</span> Locators, auto-waiting, and the actionability engine</h2>
+      <p class="h2sub">Most flaky suites die in the gap between an element existing and an element being ready. Playwright closes that gap in the driver.</p>
+
+      <h3>Locators are not element handles</h3>
+      <p>In older drivers, finding an element returned a pointer to one specific DOM node; a re-render left it
+      stale and the test died pointing nowhere near the real problem. A Playwright locator inverts the model.
+      <code>page.getByRole('button', { name: 'Place order' })</code> does zero DOM work when you create it —
+      it is a stored query, re-executed against the live DOM at the moment you act on it. Staleness is not
+      handled gracefully; it is <strong>structurally impossible</strong>.</p>
+
+      <h3>The actionability gauntlet</h3>
+      <p>Before <code>click()</code> dispatches a single input event, the driver marches the resolved element
+      through these checks. Each encodes a human expectation:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Check</th><th>What the engine verifies</th><th>The flake it prevents</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Attached</strong></td><td>Resolves to a node connected to the DOM</td><td>Acting on an element a re-render just destroyed</td></tr>
+            <tr><td><strong>Visible</strong></td><td>Non-empty bounding box, not <code>visibility:hidden</code></td><td>Clicking elements a real user cannot see</td></tr>
+            <tr><td><strong>Stable</strong></td><td>Bounding box unchanged across two consecutive frames</td><td>Clicking a button mid-slide and hitting a vacated pixel</td></tr>
+            <tr><td><strong>Receives events</strong></td><td>The element is the actual hit target at the action point</td><td>Clicks swallowed by spinners, toasts, modals, sticky headers</td></tr>
+            <tr><td><strong>Enabled</strong></td><td>Not disabled, directly or via a parent</td><td>Clicking a submit button the app disabled while saving</td></tr>
+            <tr><td><strong>Editable</strong></td><td>Enabled and not <code>readonly</code> (for <code>fill</code>/typing)</td><td>Typing into inputs that discard every keystroke</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The important part is the loop around that table. The checks are not evaluated once. If any gate
+      fails, the engine waits for the next animation frame, re-resolves the locator from scratch, and runs the
+      ladder again — inside the driver, next to the browser. That loop plus the lazy locator underneath it is
+      all "auto-waiting" is: a fast retry engine closer to the browser than your code could ever be.</p>
+
+      <h3>Web-first assertions: the same loop, pointed at verification</h3>
+      <p><code>await expect(locator).toHaveText('Confirmed')</code> does not read the DOM once. The matcher
+      re-resolves the locator, reads the current value, and repeats until the expectation passes or the
+      assertion timeout expires. An assertion here is a <strong>poll, not a snapshot</strong>.</p>
+
+      <div class="callout warn">
+        <span class="t">An <code>await</code> inside the parentheses is a smell</span>
+        <p><code>expect(await locator.textContent()).toBe('...')</code> freezes one instant in time, then
+        compares it against a page that has already moved on. Pass the locator itself
+        (<code>expect(locator).toHaveText(...)</code>) so the matcher controls the read and retries.</p>
+      </div>
+
+      <h3>The locator strategy ladder</h3>
+      <p>Auto-waiting solves <em>when</em> to act. Selector choice solves <em>where</em>, and it decides how
+      long the suite survives a redesign. Work down this ladder and stop at the first rung that uniquely
+      identifies your element:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Tier</th><th>API</th><th>Tied to</th><th>Survives a redesign?</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td><code>getByRole('button', { name: 'Checkout' })</code></td><td>The accessibility tree: what users perceive</td><td>Yes, unless the product itself changes</td></tr>
+            <tr><td>2</td><td><code>getByLabel</code>, <code>getByPlaceholder</code>, <code>getByText</code></td><td>Visible copy and form semantics</td><td>Mostly; breaks only when copy changes</td></tr>
+            <tr><td>3</td><td><code>getByTestId('order-total')</code></td><td>A contract negotiated with developers</td><td>Yes, but it proves nothing user-facing</td></tr>
+            <tr><td>4</td><td>CSS / XPath</td><td>DOM structure, class names, node order</td><td>Rarely; first casualty of any refactor</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Role-based locators win because they query the accessibility tree, not the DOM. A button named
+      "Checkout" stays a button named "Checkout" whether the team migrates to semantic HTML, renames every
+      class, or swaps component libraries. There is a second dividend: if <code>getByRole</code> cannot find
+      your element, a screen reader probably cannot either.</p>
+
+      <h3>Strictness: one locator, one element</h3>
+      <p>Every action on a locator carries an implicit claim: exactly one element matches. If two match,
+      Playwright refuses to guess and throws a <strong>strict mode violation</strong>. Silently clicking the
+      first of twelve Delete buttons is how a passing suite deletes the wrong order.</p>
+
+      <span class="codelabel">Resolving a strict-mode violation the right way</span>
+      <pre><code>// Throws: strict mode violation, resolved to 3 elements
+await page.getByRole('button', { name: 'Delete' }).click();
+
+// Fix 1: scope through a container the user would recognize
+const row = page.getByRole('row', { name: 'Order #1042' });
+await row.getByRole('button', { name: 'Delete' }).click();
+
+// Fix 2: filter the candidates by content
+await page.getByRole('listitem')
+  .filter({ hasText: 'Wireless Mouse' })
+  .getByRole('button', { name: 'Delete' })
+  .click();</code></pre>
+
+      <p><code>.first()</code> and <code>.nth()</code> silence the violation but bake accidental page order
+      into the test — the day a designer reorders the list, you act on the wrong element and nothing fails
+      loudly.</p>
+
+      <h3>From sleeps to signals</h3>
+      <pre><code>// The version that fails every third run
+await page.click('#nav &gt; ul &gt; li:nth-child(3) &gt; a');
+await page.waitForTimeout(3000);          // hope the cart rendered
+await page.click('.btn.btn-primary');      // which primary button?
+
+// Rebuilt on locators and web-first assertions
+await page.getByRole('link', { name: 'Cart' }).click();
+await page.getByRole('button', { name: 'Proceed to checkout' }).click();
+await expect(page.getByRole('status')).toHaveText('Coupon applied');
+await expect(page.getByTestId('order-total')).toHaveText('Rs 900.00');</code></pre>
+
+      <p>The rewrite deletes ten seconds of fixed sleeps and every brittle selector. Each <code>expect</code>
+      line moonlights as a synchronisation point, so the assertion after it never races.</p>
+    </section>
+
+    <!-- ================= 11 ================= -->
+    <section id="network">
+      <h2><span class="num">11</span> The network layer</h2>
+      <p class="h2sub">Everything a page fetches flows past the driver, so Playwright can observe and control it — from inside the browser, not via an external proxy.</p>
+
+      <p><code>page.on('request')</code> and <code>page.on('response')</code> expose the passive stream;
+      <code>page.waitForResponse()</code> turns it into a synchronisation point; and <code>page.route()</code>
+      upgrades observation into control.</p>
+
+      <div class="callout">
+        <span class="t">Interception happens inside the browser</span>
+        <p>Playwright network interception happens inside the browser, instructed over the driver protocol —
+        not in an external proxy wedged between browser and internet. No proxy to configure, no certificate
+        to install, HTTPS interceptable out of the box. That is why a route handler can rewrite a live request
+        identically on all three engines.</p>
+      </div>
+
+      <h3>route: fulfill, continue, abort, fallback</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Handler call</th><th>Effect</th><th>Typical job</th></tr></thead>
+          <tbody>
+            <tr><td><code>route.fulfill()</code></td><td>Browser never sends the request; your canned response returns</td><td>Mock API states: empty, error, slow, huge</td></tr>
+            <tr><td><code>route.continue()</code></td><td>Proceeds with optional mutations (URL, method, headers, body)</td><td>Inject auth headers, retarget one endpoint</td></tr>
+            <tr><td><code>route.abort()</code></td><td>Fails like a network error</td><td>Kill analytics, ads, chat widgets</td></tr>
+            <tr><td><code>route.fallback()</code></td><td>Defers to the next matching handler</td><td>Layer per-test overrides on suite defaults</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Two ordering rules keep layered handlers sane: when several match they run in <strong>reverse
+      registration order</strong> (newest wins), and <code>page.route()</code> handlers <strong>outrank</strong>
+      <code>context.route()</code> handlers. That yields a clean composition pattern — broad suite defaults on
+      the context, one-off overrides on the page.</p>
+
+      <span class="codelabel">Forcing an empty state that is otherwise impossible to reach</span>
+      <pre><code>await page.route('**/api/orders**', (route) =&gt;
+  route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ orders: [], totalCount: 0 }),
+  })
+);
+await page.goto('/account/orders');
+await expect(page.getByRole('heading', { name: 'No orders yet' })).toBeVisible();</code></pre>
+
+      <h3>HAR: determinism without hand-written fixtures</h3>
+      <p>Record real traffic once, replay it forever, offline and byte-for-byte deterministic. Recording is a
+      context option (the context owns the network, so it owns the archive):</p>
+      <pre><code>// record once against the real API
+const context = await browser.newContext({
+  recordHar: { path: 'hars/orders.har', urlFilter: '**/api/**' },
+});
+// replay in tests
+await page.routeFromHAR('hars/orders.har', {
+  url: '**/api/**',
+  update: !!process.env.UPDATE_HARS,   // re-record on demand
+});</code></pre>
+
+      <p>By default a request with no recorded entry is <em>aborted</em> — exactly the loud failure you want
+      the day the frontend calls an endpoint nobody recorded. Treat archives as versioned test data with a
+      scheduled refresh.</p>
+
+      <h3>Blocking third-party noise</h3>
+      <pre><code>export const test = base.extend({
+  context: async ({ context }, use) =&gt; {
+    await context.route(/(analytics|telemetry|tracking|adservice|pixel)\./, (route) =&gt; route.abort());
+    await use(context);
+  },
+});</code></pre>
+
+      <h3>The Chromium escape hatch: raw CDP</h3>
+      <p>When the portable API runs out, Chromium exposes the entire Chrome DevTools Protocol, and Playwright
+      hands you a raw session via <code>page.context().newCDPSession(page)</code> for performance metrics,
+      coverage, memory, throttling, and exotic emulation. It is Chromium-only, so anything CDP-dependent
+      belongs in a Chromium-scoped project — never the cross-browser matrix.</p>
+
+      <h3>Choosing a strategy per test</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Strategy</th><th>Determinism</th><th>What it verifies</th><th>Use it for</th></tr></thead>
+          <tbody>
+            <tr><td>Mock with <code>page.route()</code></td><td>Total; runs offline</td><td>Frontend against an assumed contract</td><td>Edge states: empty lists, error banners, pagination limits</td></tr>
+            <tr><td>HAR replay via <code>routeFromHAR</code></td><td>High; replays recorded reality</td><td>Frontend against a captured real contract</td><td>Broad journeys on every pull request</td></tr>
+            <tr><td>Seed via API, real backend</td><td>Medium; owns its data</td><td>Frontend, backend, and the wiring between them</td><td>Money paths: signup, login, checkout</td></tr>
+            <tr><td>Real backend, shared data</td><td>Low</td><td>The whole system, including drift</td><td>A thin post-deploy smoke layer only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= 12 ================= -->
+    <section id="observability">
+      <h2><span class="num">12</span> Observability: tracing, reports, and recorders</h2>
+      <p class="h2sub">Because every command and event flows through one chokepoint, Playwright can record all of it without any instrumentation in your tests.</p>
+
+      <h3>The trace is the primary debugger</h3>
+      <p>The protocol layer is tightly integrated with tracing. Every command carries call metadata
+      (<code>startTime</code>, <code>endTime</code>, logs); a progress controller manages timeouts and
+      cancellation; and the tracing system records before/after action events plus DOM snapshots.</p>
+
+      <p>Open a trace and you get a timeline film strip of the whole test: every action with before-and-after
+      DOM snapshots, a full network log with request/response bodies, console output, and the source line each
+      action came from. The snapshots are <strong>real DOM, not pixels</strong> — you can open devtools inside
+      the trace viewer and inspect selector state at the exact moment a click missed.</p>
+
+      <ul>
+        <li><code>npx playwright show-trace path/to/trace.zip</code> opens it locally.</li>
+        <li><code>trace.playwright.dev</code> parses a trace zip entirely in your browser — the file is never uploaded, so a teammate can send you one.</li>
+        <li>The HTML report links traces and attachments inline.</li>
+      </ul>
+
+      <h3>Recorder and UI mode</h3>
+      <p><strong>Codegen</strong> records real interactions and emits working test code with stable locators
+      (<code>npx playwright codegen URL</code>, or <code>npm run codegen</code> in this project). It ships in
+      the bundled dashboard and recorder UI. <strong>UI mode</strong> (<code>npx playwright test --ui</code>)
+      is a watch-mode test explorer with a trace-like timeline for live debugging.</p>
+
+      <h3>Reporters: one run, many audiences</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Reporter</th><th>What it emits</th><th>Best audience</th></tr></thead>
+          <tbody>
+            <tr><td><code>list</code></td><td>Live line-per-test terminal output</td><td>You, running locally</td></tr>
+            <tr><td><code>html</code></td><td>Interactive report with attachments and traces</td><td>Humans triaging CI failures</td></tr>
+            <tr><td><code>blob</code></td><td>Machine-readable shard archive</td><td><code>merge-reports</code>, nothing else</td></tr>
+            <tr><td><code>junit</code></td><td>JUnit XML results</td><td>Test management and CI ingestion</td></tr>
+            <tr><td><code>github</code></td><td>Inline PR annotations</td><td>Reviewers on the pull request</td></tr>
+            <tr><td><code>json</code> / custom</td><td>Structured results for scripts</td><td>Dashboards, flake and duration analytics</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= 13 ================= -->
+    <section id="ci">
+      <h2><span class="num">13</span> Scale &amp; CI</h2>
+      <p class="h2sub">Everything built earlier — isolation, fixtures, deterministic data — exists so the suite can run wide on disposable machines and still produce one coherent answer.</p>
+
+      <h3>Two axes of parallelism</h3>
+      <ul>
+        <li><strong>Workers (vertical).</strong> An OS process that runs one test at a time against its own
+          context. Locally the default is roughly half your logical cores; pin it in CI so runtimes are
+          reproducible.</li>
+        <li><strong>Shards (horizontal).</strong> <code>npx playwright test --shard=2/4</code> runs the second
+          quarter of the suite on an independent machine. Total parallelism is shards × workers — 4 shards ×
+          4 workers is a 16-wide run.</li>
+      </ul>
+
+      <p>The merge problem — four machines producing four disconnected result sets — is solved by the
+      <strong>blob reporter</strong>. Each shard writes a <code>blob-report/</code> archive; a final job
+      downloads them and runs <code>npx playwright merge-reports</code>, producing one report
+      indistinguishable from a single-machine run.</p>
+
+      <span class="codelabel">playwright.config.ts — the CI-relevant slice</span>
+      <pre><code>export default defineConfig({
+  fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
+  retries: process.env.CI ? 2 : 0,
+  reporter: process.env.CI
+    ? [['blob'], ['github']]
+    : [['list'], ['html', { open: 'on-failure' }]],
+  use: {
+    baseURL: process.env.BASE_URL ?? 'https://app.thetestingacademy.com/playwright/',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+});</code></pre>
+
+      <p>Note the shape: reporters and retries switch on <code>process.env.CI</code>, artifacts are
+      failure-scoped, and <code>baseURL</code> comes from the environment so the same suite can point at a
+      preview deployment, staging, or a practice target.</p>
+
+      <h3>Retries and what "flaky" means</h3>
+      <p><code>retries: process.env.CI ? 2 : 0</code> encodes a policy. Locally, zero — a red test should stay
+      red until you understand it. In CI, up to two extra attempts absorb genuinely environmental failures.
+      Retries change what statuses mean: passed on attempt one is <strong>passed</strong>; failed every
+      attempt is <strong>failed</strong>; failed then passed is <strong>flaky</strong> — its own bucket that by
+      default does not fail the build. Treat that bucket as a debt ledger, not a trash can.</p>
+
+      <div class="callout warn">
+        <span class="t">Retries are anesthesia, not treatment</span>
+        <p><code>trace: 'on-first-retry'</code> is what makes retries pay rent: attempt one runs with zero
+        tracing overhead, and a failing test's retry records a full trace. One honest nuance — for a flaky
+        test the trace shows the retry that <em>passed</em>. If your flake hunt demands a trace of the actual
+        failure, use <code>trace: 'retain-on-first-failure'</code>.</p>
+      </div>
+
+      <h3>The artifact trio</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Artifact</th><th>Setting</th><th>Captured when</th></tr></thead>
+          <tbody>
+            <tr><td>Trace</td><td><code>trace: 'on-first-retry'</code></td><td>First retry of a failing test</td></tr>
+            <tr><td>Screenshot</td><td><code>screenshot: 'only-on-failure'</code></td><td>Final state of each failed attempt</td></tr>
+            <tr><td>Video</td><td><code>video: 'retain-on-failure'</code></td><td>Whole test, kept only on failure</td></tr>
+            <tr><td>Blob report</td><td><code>reporter: 'blob'</code></td><td>Every sharded run</td></tr>
+            <tr><td>HTML report</td><td><code>merge-reports --reporter html</code></td><td>Merge job</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Where flake actually comes from</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Cause</th><th>Looks like</th><th>The real fix</th></tr></thead>
+          <tbody>
+            <tr><td>App not ready when you act</td><td>Click lands before hydration; nothing happens</td><td>Act through locators; assert on outcomes, never on timers</td></tr>
+            <tr><td>Test-order coupling</td><td>Passes alone, fails in the suite</td><td>Fresh context per test; seed data per test</td></tr>
+            <tr><td>Data collisions in parallel</td><td>Two workers register the same email</td><td>Unique data per run (timestamp / uuid)</td></tr>
+            <tr><td>Time and timezone</td><td>Passes until midnight or in a UTC region</td><td>Freeze time with the Clock API; pin timezone/locale</td></tr>
+            <tr><td>Animations</td><td>Element moving when the click fires</td><td>Auto-wait checks stability; add <code>reducedMotion</code></td></tr>
+            <tr><td>Third-party calls</td><td>Analytics endpoint is slow, page hangs</td><td>Block third parties with <code>route</code></td></tr>
+            <tr><td>Eventual consistency</td><td>Write shows up a beat after the API returns 200</td><td><code>expect.poll</code> / web-first assertions</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Playwright ships specific stabilisers for these: <code>expect.poll()</code> and
+      <code>expect(...).toPass()</code> for eventual consistency, the <code>Clock</code> API
+      (<code>page.clock.install()</code> / <code>fastForward()</code>) for time-dependent UI, and
+      <code>reducedMotion</code> plus route-blocking for environmental noise.</p>
+    </section>
+
+    <!-- ================= 14 ================= -->
+    <section id="vs">
+      <h2><span class="num">14</span> Why the design wins — and the Selenium contrast</h2>
+      <p class="h2sub">Classic WebDriver sends each command as an HTTP request. Playwright holds one persistent socket. That single difference cascades into everything else.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Concern</th><th>Classic WebDriver model</th><th>Playwright model</th></tr></thead>
+          <tbody>
+            <tr><td>Wire model</td><td>One HTTP round trip per command</td><td>One persistent connection, messages both directions</td></tr>
+            <tr><td>Browser events</td><td>No push; the client polls</td><td>Streamed instantly: requests, console, dialogs, frames</td></tr>
+            <tr><td>Where waiting lives</td><td>In your test code (explicit waits)</td><td>In the driver, fused into every action</td></tr>
+            <tr><td>Per-command cost</td><td>HTTP overhead every time</td><td>Near zero after the initial connect</td></tr>
+            <tr><td>Isolation unit</td><td>Often a whole new browser session</td><td>A cheap <code>BrowserContext</code> inside a shared process</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Classic WebDriver has structural costs: every action pays HTTP overhead, the server cannot push so
+      your code must poll, and waiting logic must live client-side. Playwright's single persistent socket
+      inverts all three: per-command cost is amortised to almost nothing, events are pushed the instant they
+      occur, and waiting is fused into actions inside the driver. <code>page.waitForRequest()</code> and
+      web-first assertions are cheap subscriptions to a stream, not polling loops hammering the browser.</p>
+
+      <div class="callout tip">
+        <span class="t">The standards are converging</span>
+        <p>WebDriver BiDi adds a bidirectional channel to the WebDriver standard, converging on the model
+        Playwright made mainstream. Playwright already has experimental BiDi support alongside CDP, Juggler,
+        and the WebKit Inspector protocol.</p>
+      </div>
+
+      <h3>The payoff: consistent behaviour across languages</h3>
+      <p>The middle driver layer exists for three compounding reasons. <strong>Write-once logic:</strong>
+      actionability, auto-waiting, selector engines, tracing, and network interception live once in the driver;
+      the Python/Java/.NET bindings are thin serialisers. <strong>One API over three protocols:</strong> the
+      driver is the adapter hiding CDP, Juggler, and WebKit behind a single model. <strong>The chokepoint pays
+      rent:</strong> because everything flows through the driver, trace and video recording need zero
+      instrumentation in your tests.</p>
+    </section>
+
+    <!-- ================= 15 ================= -->
+    <section id="project">
+      <h2><span class="num">15</span> This project, mapped</h2>
+      <p class="h2sub">How the concepts above appear in the code actually sitting in this repository.</p>
+
+      <h3>Configuration is the contract</h3>
+      <p>Every test inherits <code>playwright.config.ts</code>. The relevant pieces here:</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Setting</th><th>Value in this repo</th><th>Architectural meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>testDir</code></td><td><code>./tests</code></td><td>Where the loader discovers spec files</td></tr>
+            <tr><td><code>fullyParallel</code></td><td><code>true</code></td><td>The unit of distribution is the individual test, not the file</td></tr>
+            <tr><td><code>retries</code></td><td><code>CI ? 2 : 0</code></td><td>Flake absorption only in CI; local red stays red</td></tr>
+            <tr><td><code>workers</code></td><td><code>CI ? 1 : undefined</code></td><td>Conservative CI default; local default ≈ half the cores</td></tr>
+            <tr><td><code>reporter</code></td><td><code>html</code></td><td>Interactive report with attachments/traces</td></tr>
+            <tr><td><code>use.headless</code></td><td><code>false</code></td><td>A visible browser window — useful for learning, unusual for CI</td></tr>
+            <tr><td><code>use.trace</code></td><td><code>on-first-retry</code></td><td>Zero tracing overhead on the happy path; a full trace on failure</td></tr>
+            <tr><td><code>projects</code></td><td>chromium · firefox · webkit</td><td>One suite, three engine permutations via <code>devices[...]</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <span class="t">Projects = one suite, many targets</span>
+        <p><code>projects</code> is a named permutation of the same suite. Here it is per-browser
+        (<code>devices['Desktop Chrome']</code>, <code>['Desktop Firefox']</code>,
+        <code>['Desktop Safari']</code>), but the mechanism generalises to per-environment
+        (<code>baseURL</code> + <code>grep</code>) and per-concern (<code>setup</code>, <code>api</code>,
+        <code>e2e</code>) with <code>dependencies</code> wiring the order. Run one with
+        <code>npx playwright test --project=chromium</code>.</p>
+      </div>
+
+      <h3>Scripts map to the toolchain</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Command</th><th>What runs</th></tr></thead>
+          <tbody>
+            <tr><td><code>npm test</code></td><td><code>playwright test</code> — the runner, workers, and reporters</td></tr>
+            <tr><td><code>npm run test:headed</code></td><td>Same, with visible browser windows</td></tr>
+            <tr><td><code>npm run test:ui</code></td><td>UI mode — watch mode with a trace-like timeline</td></tr>
+            <tr><td><code>npm run codegen</code></td><td>The recorder: launch a browser, interact, get generated test code</td></tr>
+            <tr><td><code>npm run report</code></td><td>Serve the last HTML report</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The tests, and where they sit on the stack</h3>
+      <p><code>tests/example.spec.ts</code> navigates and asserts on the title and a heading — a clean slice
+      through the client SDK, driver, CDP/Juggler/WebKit, and renderer. <code>tests/sample.spec.ts</code> drives
+      a login flow with role- and test-id locators; note its <code>page.waitForTimeout(23000)</code> — a
+      textbook fixed sleep that this page's section 10 would replace with a web-first assertion on the
+      post-login state. It is a great before/after exercise against the same practice application the
+      <code>codegen</code> script targets.</p>
+
+      <div class="callout tip">
+        <span class="t">Exercises that make the architecture visceral</span>
+        <ul>
+          <li>Run <code>npx playwright test --trace on</code>, then open the trace. The action list <em>is</em> the protocol command log, and expanding an action shows each actionability check the driver ran.</li>
+          <li>Set <code>workers: 4</code> and log <code>test.info().parallelIndex</code> — watch distinct OS processes pick up tests.</li>
+          <li>Add a <code>page.route()</code> mock for an endpoint and confirm the request never leaves the machine.</li>
+          <li>Run one spec under <code>--project=chromium</code> and <code>--project=webkit</code> and diff the traces — same API, different dialect underneath.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= 16 ================= -->
+    <section id="debug">
+      <h2><span class="num">16</span> Debug index: name the layer before you debug</h2>
+      <p class="h2sub">Read a failure, place it on the map, then investigate. This halves the time to a fix.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Message fragment</th><th>Layer</th><th>What it is telling you</th><th>First move</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>waiting for locator(...)</code> then timeout</td><td>Driver</td>
+              <td>The query never matched any node at all</td>
+              <td>Wrong selector, content inside an iframe, or the app never reached this state; open the trace snapshot</td>
+            </tr>
+            <tr>
+              <td><code>element is not stable</code></td><td>Driver · actionability</td>
+              <td>Bounding box kept moving between frames</td>
+              <td>An entry animation or layout shift; assert the state that ends the motion, or reduce motion</td>
+            </tr>
+            <tr>
+              <td><code>strict mode violation: resolved to 2 elements</code></td><td>Locator design</td>
+              <td>Your locator is ambiguous on this page state</td>
+              <td>Scope through a container or add <code>.filter()</code> — treat it as a gift</td>
+            </tr>
+            <tr>
+              <td><code>&lt;div class="overlay"&gt; intercepts pointer events</code></td><td>Driver · hit test</td>
+              <td>Every check passed except the hit test; something sits on top</td>
+              <td>Assert the overlay/spinner/banner is hidden before clicking</td>
+            </tr>
+            <tr>
+              <td><code>element is not visible</code></td><td>Driver · actionability</td>
+              <td>Attached to the DOM but zero-size or hidden</td>
+              <td>Open the collapsed parent (accordion, menu, tab) first</td>
+            </tr>
+            <tr>
+              <td><code>Target page, context or browser has been closed</code></td><td>Transport / browser</td>
+              <td>Something killed the browser mid-run</td>
+              <td>Commonly OOM in a CI container; check memory and sandbox flags</td>
+            </tr>
+            <tr>
+              <td><code>Test timeout of 30000ms exceeded</code></td><td>Worker budget</td>
+              <td>The worker's clock ran out — not necessarily an element problem</td>
+              <td>Set an <code>actionTimeout</code> so the smallest clock fires first</td>
+            </tr>
+            <tr>
+              <td><code>no tests found</code> / shard surprises</td><td>Runner / config</td>
+              <td>Discovery, filters, or projects excluded everything</td>
+              <td>Re-check <code>testDir</code>, <code>testMatch</code>, and CLI filters</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <span class="t">Each message is the engine refusing to do something a user could not do</span>
+        <p>An actionability error is either a locator problem or — more often than you would expect — a genuine
+        product defect: an overlay that never dismisses, a button that stays disabled, a spinner that outlives
+        its request. A suite built on tight locators and web-first assertions converts flake investigations
+        into bug reports.</p>
+      </div>
+    </section>
+
+    <!-- ================= 17 ================= -->
+    <section id="glossary">
+      <h2><span class="num">17</span> Glossary</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Driver</strong></td><td>The Node.js server process holding the core engine — the "far end" of the channel protocol.</td></tr>
+            <tr><td><strong>Client SDK</strong></td><td>The thin proxy classes (<code>Page</code>, <code>Locator</code>…) inside a worker that serialise calls.</td></tr>
+            <tr><td><strong>Channel</strong></td><td>The internal RPC protocol and the object interface used to address server-side entities by GUID.</td></tr>
+            <tr><td><strong>GUID</strong></td><td>The identity of a channel object; the <code>guid</code> field tells the server which object a command targets.</td></tr>
+            <tr><td><strong>Dispatcher</strong></td><td>Server-side counterpart to a client <code>ChannelOwner</code>; routes commands to domain logic and pushes events back.</td></tr>
+            <tr><td><strong>PageDelegate</strong></td><td>The per-engine interface (<code>CRPage</code>/<code>FFPage</code>/<code>WKPage</code>) that speaks the browser's native protocol.</td></tr>
+            <tr><td><strong>CDP</strong></td><td>Chrome DevTools Protocol — Chromium's automation channel (also used by DevTools itself).</td></tr>
+            <tr><td><strong>Juggler</strong></td><td>Playwright's custom Firefox automation protocol in patched builds.</td></tr>
+            <tr><td><strong>WebKit Inspector Protocol</strong></td><td>The extended debugging protocol used to drive patched WebKit.</td></tr>
+            <tr><td><strong>WebDriver BiDi</strong></td><td>An emerging bidirectional standard for browser automation; supported experimentally.</td></tr>
+            <tr><td><strong>InjectedScript</strong></td><td>A JS bundle run inside the page for DOM querying and inspection.</td></tr>
+            <tr><td><strong>Actionability</strong></td><td>The attached/visible/stable/enabled/editable/receives-events checks run before an action.</td></tr>
+            <tr><td><strong>Worker</strong></td><td>An OS process that executes tests, one at a time, against its own contexts.</td></tr>
+            <tr><td><strong>Shard</strong></td><td>A slice of the suite run on an independent machine (<code>--shard=i/n</code>).</td></tr>
+            <tr><td><strong>Blob report</strong></td><td>A per-shard archive merged with <code>merge-reports</code> into one report.</td></tr>
+            <tr><td><strong>storageState</strong></td><td>Saved cookies + localStorage used to start contexts already authenticated.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <hr />
+
+    <section id="sources">
+      <h2><span class="num">18</span> Sources</h2>
+      <p class="h2sub">Primary and secondary references used to compile this page. Version-specific details were also read directly from the installed packages in this repository.</p>
+      <ul>
+        <li><a href="https://app.thetestingacademy.com/playwright/playwright-e2e-architecture-blueprint">Playwright End-to-End Architecture Blueprint — The Testing Academy</a> (hop-by-hop journey, actionability, network, CI).</li>
+        <li><a href="https://deepwiki.com/microsoft/playwright/1.1-core-architecture">Core Architecture — DeepWiki (microsoft/playwright)</a> (four layers, client/server split, request flow).</li>
+        <li><a href="https://deepwiki.com/microsoft/playwright/8.2-protocol-communication-architecture">Protocol Communication Architecture — DeepWiki</a> (channel protocol, codegen pipeline, dispatchers, transports).</li>
+        <li><a href="https://deepwiki.com/microsoft/playwright/4.3-test-execution-architecture">Test Execution Architecture — DeepWiki</a> (loader, dispatcher, workers, IPC payloads, timeouts).</li>
+        <li><a href="https://deepwiki.com/microsoft/playwright/3.1-browser-and-context-management">Browser and Context Management — DeepWiki</a> (object hierarchy, isolation, persistent contexts, remote server).</li>
+        <li><a href="https://deepwiki.com/microsoft/playwright/2.1-browser-configuration-and-protocols">Browser Configuration and Protocols — DeepWiki</a> (browsers.json registry, device descriptors, protocol variants).</li>
+        <li><a href="https://deepwiki.com/microsoft/playwright/8-advanced-topics">Advanced Topics — DeepWiki</a> (component testing, MCP server, Electron/Android/WebView2).</li>
+        <li><a href="https://playwright.dev/docs/library">Library — Playwright documentation</a> (Library vs Test Runner differences, launching, downloads, TypeScript).</li>
+        <li>Local package inspection: <code>@playwright/test 1.63.0</code>, <code>playwright-core 1.63.0</code>, <code>browsers.json</code>, and this repository's own <code>playwright.config.ts</code> and tests.</li>
+      </ul>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <h3>Playwright End-to-End Architecture</h3>
+  <p>A single-file, offline research page. Grounded in <code>@playwright/test 1.63.0</code> as installed in this repository. No external assets, fonts, or scripts are loaded — the diagrams are pure HTML/CSS.</p>
+  <p>Filed under <code>ResearchTopics/</code>.</p>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById("themeToggle");
+    var icon = document.getElementById("themeIcon");
+    var label = document.getElementById("themeLabel");
+
+    function reflect() {
+      var t = root.getAttribute("data-theme");
+      icon.textContent = t === "dark" ? "☾" : "☀";
+      label.textContent = t === "dark" ? "Dark" : "Light";
+    }
+    reflect();
+
+    btn.addEventListener("click", function () {
+      var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("pw-arch-theme", next); } catch (e) {}
+      reflect();
+    });
+
+    // Scroll-spy for the sidebar TOC.
+    var links = Array.prototype.slice.call(document.querySelectorAll(".sidebar a"));
+    var map = {};
+    links.forEach(function (a) {
+      var id = a.getAttribute("href").slice(1);
+      var el = document.getElementById(id);
+      if (el) map[id] = { link: a, el: el };
+    });
+
+    if ("IntersectionObserver" in window) {
+      var current = null;
+      var obs = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            var id = e.target.id;
+            if (current && current !== id && map[current]) map[current].link.classList.remove("active");
+            if (map[id]) map[id].link.classList.add("active");
+            current = id;
+          }
+        });
+      }, { rootMargin: "-80px 0px -70% 0px", threshold: 0 });
+      Object.keys(map).forEach(function (id) { obs.observe(map[id].el); });
+    }
+  })();
+</script>
+</body>
+</html>
