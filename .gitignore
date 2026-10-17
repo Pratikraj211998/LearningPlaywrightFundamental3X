@@ -12,3 +12,27 @@ abc.png
 
 # macOS
 .DS_Store
+# saved auth state (contains live session cookies)
+user-session.json
+*storage*.json
+
+# generated reports
+/tta-report/
+/allure-results/
+/allure-report/
+/reports/
+
+# stray screenshots from keyboard lessons
+/A.png
+/O.png
+/ArrowLeft.png
+
+# downloaded files from the download lesson
+/out/
+outsample-download.txt
+
+# fs lesson output
+tests/**/out/
+
+# stray fs-lesson output
+/output.json
