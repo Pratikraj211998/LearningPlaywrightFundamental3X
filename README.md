@@ -106,7 +106,7 @@ npx playwright install
 
 ## 4. Project structure
 
-This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, but only `01_Basics` and `02_TestAnnotations` have files in them so far:
+This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 05 now have real files in them:
 
 ```
 LearningPlaywrightFundamental3X/
@@ -122,9 +122,22 @@ LearningPlaywrightFundamental3X/
 │   ├── 02_TestAnnotations/
 │   │   ├── 223_TestAnnotations.spec.ts  # skip, only, fail, fixme, slow
 │   │   └── 224_TestDescribe.spec.ts     # grouping tests with describe
-│   ├── 03_Locator_Commands/             # created, empty — not started yet
-│   ├── 04_Session_Storage/              # created, empty
-│   ├── 05_Allure_Reporting/             # created, empty
+│   ├── 03_Locator_Commands/
+│   │   ├── 225_LC.spec.ts               # waitUntil, per-navigation timeout + referer
+│   │   ├── 226_Refere.spec.ts           # context-level extraHTTPHeaders
+│   │   ├── 227_Fresh.spec.ts            # default CSS locators (#id, .class, [attr])
+│   │   ├── 227_homework.spec.ts         # same, on a second practice site + XPath
+│   │   ├── 228_17SepTask.spec.ts        # mixing CSS/getByLabel/getByRole/getByTestId
+│   │   ├── 228_Project3.spec.ts         # XPath, .first(), reading .textContent()
+│   │   ├── 229_getByRole.spec.ts        # getByRole with exact: true
+│   │   └── 230_getByRole.spec.ts        # getByRole('link', ...) navigation
+│   ├── 04_Session_Storage/
+│   │   ├── 231_SessionStorage.ts        # library script: log in once, save storageState
+│   │   └── 232_TestWingify.spec.ts      # reuse the saved session, skip login entirely
+│   ├── 05_Allure_Reporting/
+│   │   ├── 232_TestWingify.spec.ts              # same dashboard checks, feeding the reporters
+│   │   ├── 233_Custom_Report_TestWingify.spec.ts  # near-duplicate of 232, WIP while wiring the reporter
+│   │   └── 234_Media_Custom_Report.spec.ts      # test.step() + forced screenshot/video/trace
 │   ├── 06_Multiple_Element_Filter/      # created, empty
 │   ├── 07_WebTables/                    # created, empty
 │   ├── 08_Web_Select_Frames_Iframe/     # created, empty
@@ -149,7 +162,14 @@ LearningPlaywrightFundamental3X/
 │   │   └── 05_SKILL_PW_36/
 │   └── 23_Advance_PW_Framework/         # created, empty
 ├── notes/
-│   └── 01_Basics.md           # personal notes for topic 01
+│   ├── 01_Basics.md            # personal notes for topic 01
+│   ├── 02_TestAnnotations.md   # personal notes for topic 02
+│   ├── 03_Locator_Commands.md  # personal notes for topic 03
+│   ├── 04_Session_Storage.md   # personal notes for topic 04
+│   └── 05_Allure_Reporting.md  # personal notes for topic 05
+├── utils/
+│   ├── CustomReporter.ts       # hand-written Reporter implementation (see notes/05)
+│   └── selfHeal.ts             # types for self-healing locator reports (topic 22 preview)
 ├── docs/images/
 │   ├── playwright-architecture.png      # the diagram referenced earlier in this README
 │   ├── playwright-architecture.html
@@ -200,6 +220,9 @@ flowchart LR
 | 10 | Keyboard, Hover, Drag Drop, Calendar | 22 | Misc AI Concepts |
 | 11 | JS Alerts | 23 | Advance PW Framework |
 | 12 | Handle SVG | | |
+
+**Progress so far:** topics 01–05 have real files (see `notes/` for a write-up of each);
+06–23 are created as empty folders, ready to fill in as the course reaches them.
 
 The last two folders branch further:
 
