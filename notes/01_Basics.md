@@ -11,7 +11,7 @@ Notes for everything covered in `tests/01_Basics/`. Diagrams are in Mermaid
 | `217_Multiple_Context.ts` | Multiple `BrowserContext`s = multiple isolated users (raw `playwright` lib) |
 | `218_Normal_Playwright.ts` | Browser → Context → Page hierarchy, manual launch/cleanup (raw lib) |
 | `219_tta-check.spec.ts` | Real-world login flow using role-based locators |
-| `220_BCP.spec.ts` | Browser-Context-Page pattern explained level by level |
+| `220_BCP.spec.ts` | Browser-Context-Page pattern, logged step by step — ⚠️ see note below, this one needs attention |
 | `221_TA.spec.ts` | Independent tests per file + multi-role test (admin/user/guest) |
 | `222.Test_Options.spec.ts` | Context options: viewport, locale, geolocation, mobile emulation |
 
@@ -103,6 +103,17 @@ await browser.close();
 **Cleanup rule:** close in the reverse order you opened — `page → context → browser`.
 Closing a browser without closing its contexts/pages first can leave resources dangling.
 
+**⚠️ `220_BCP.spec.ts` needs attention:** it's the same BCP pattern as above (console-logging
+each level instead of navigating anywhere), but it's a **raw library script** — it imports
+from `"playwright"`, not `"@playwright/test"`, and has no `test()` block. The problem is its
+`.spec.ts` name: Playwright's runner *will* try to import it when collecting tests, and the
+file calls `run()` unconditionally at import time — so `npx playwright test` (or even just
+`--list`) launches a real browser as a side effect of discovery, and it can crash with
+`browser.newContext: Target page, context or browser has been closed` depending on timing.
+Fix is one of: rename it to `220_BCP.ts` (matches `217`/`218`'s pattern of `.ts`-not-`.spec.ts`
+for raw scripts), or comment out the `run()` call the way `219_tta-check.spec.ts` currently
+has its body commented out.
+
 ---
 
 ## 4. Multiple contexts = multiple isolated users
@@ -141,7 +152,7 @@ await browser.close();
 ```
 
 Same idea, but inside the **Test runner** using the `browser` fixture directly
-(`220_BCP.spec.ts` / `221_TA.spec.ts`):
+(`221_TA.spec.ts`):
 
 ```ts
 test("BCP - in app.vwo.com two roles", async ({ browser }) => {

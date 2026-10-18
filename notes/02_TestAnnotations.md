@@ -65,6 +65,12 @@ flowchart LR
 one test right now." **Never commit `test.only`** — it will silently skip the rest
 of your suite in CI. Many teams add a lint rule to block it from merging.
 
+**⚠️ This isn't just a hypothetical — check `223_TestAnnotations.spec.ts` right now.**
+That `test.only('login as Pramod', ...)` above is the actual, current content of the file,
+not a made-up example. As it stands, running this file skips `checkout with PayPal`,
+`cart total is wrong`, `upload 2GB file`, `full regression report`, and `mobile layout` —
+only `login as Pramod` runs. Remove `.only` once you're done focusing on that one test.
+
 ---
 
 ## 4. `test.fail` — this test is EXPECTED to fail
