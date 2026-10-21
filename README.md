@@ -106,7 +106,7 @@ npx playwright install
 
 ## 4. Project structure
 
-This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 05 now have real files in them:
+This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 09 now have real files in them:
 
 ```
 LearningPlaywrightFundamental3X/
@@ -138,10 +138,26 @@ LearningPlaywrightFundamental3X/
 │   │   ├── 232_TestWingify.spec.ts              # same dashboard checks, feeding the reporters
 │   │   ├── 233_Custom_Report_TestWingify.spec.ts  # near-duplicate of 232, WIP while wiring the reporter
 │   │   └── 234_Media_Custom_Report.spec.ts      # test.step() + forced screenshot/video/trace
-│   ├── 06_Multiple_Element_Filter/      # created, empty
-│   ├── 07_WebTables/                    # created, empty
-│   ├── 08_Web_Select_Frames_Iframe/     # created, empty
-│   ├── 09_Frame_Iframe/                 # created, empty
+│   ├── 06_Multiple_Element_Filter/
+│   │   ├── 235_ME.spec.ts               # allInnerTexts() vs .all() for reading many elements
+│   │   └── 236_ME.spec.ts               # .all() + getAttribute() per element
+│   ├── 07_WebTables/
+│   │   ├── 236_WebTable.spec.ts         # ⚠️ unfinished placeholder (copy of template/template.spec.ts)
+│   │   ├── 237_TestCase.spec.ts         # .count() + .nth(i) to read every row
+│   │   ├── 238_TestCase.spec.ts         # manual XPath cell-by-cell indexing, following-sibling::td
+│   │   ├── 239_TestCase.spec.ts         # .filter({ hasText }) — the idiomatic alternative
+│   │   ├── 240_TestCase.spec.ts         # CSS :has() + :text() to locate a row, then act within it
+│   │   ├── 241_WebTable_Pagination.spec.ts  # find a row across paginated results
+│   │   ├── 242_WebTable_Pagination.spec.ts  # same pagination search, as a reusable function
+│   │   └── Sept_Task.spec.ts            # manual XPath indexing + preceding-sibling checkbox click
+│   ├── 08_Web_Select_Frames_Iframe/
+│   │   ├── 243_Select_TestCase.spec.ts            # native <select> via selectOption()
+│   │   ├── 244_CustomDropDown_TestCase.spec.ts    # custom dropdown, ARIA listbox (getByRole('option'))
+│   │   └── 245_AdvacneCustomDropDown_TestCase.spec.ts  # searchable/multi/creatable/async custom dropdowns
+│   ├── 09_Frame_Iframe/
+│   │   ├── 246_Iframe_TestCase.spec.ts      # one iframe via frameLocator(), filling a form inside it
+│   │   ├── 247_Framework_TestCase.spec.ts   # named sibling frames + discovering all frames on a page
+│   │   └── 248_Nested_Iframe_TestCase.spec.ts  # frameLocator chaining — frames nested 3 levels deep
 │   ├── 10_Keyboard_Hover_Drag_Drop_Calender/  # created, empty
 │   ├── 11_JS_Alerts/                    # created, empty
 │   ├── 12_Handle_SVG/                   # created, empty
@@ -162,14 +178,20 @@ LearningPlaywrightFundamental3X/
 │   │   └── 05_SKILL_PW_36/
 │   └── 23_Advance_PW_Framework/         # created, empty
 ├── notes/
-│   ├── 01_Basics.md            # personal notes for topic 01
-│   ├── 02_TestAnnotations.md   # personal notes for topic 02
-│   ├── 03_Locator_Commands.md  # personal notes for topic 03
-│   ├── 04_Session_Storage.md   # personal notes for topic 04
-│   └── 05_Allure_Reporting.md  # personal notes for topic 05
+│   ├── 01_Basics.md                        # personal notes for topic 01
+│   ├── 02_TestAnnotations.md               # personal notes for topic 02
+│   ├── 03_Locator_Commands.md              # personal notes for topic 03 (+ full locator strategy guide)
+│   ├── 04_Session_Storage.md               # personal notes for topic 04
+│   ├── 05_Allure_Reporting.md              # personal notes for topic 05 (+ full Allure guide)
+│   ├── 06_Multiple_Element_Filter.md       # personal notes for topic 06
+│   ├── 07_WebTables.md                     # personal notes for topic 07
+│   ├── 08_Web_Select_Frames_Iframe.md      # personal notes for topic 08
+│   └── 09_Frame_Iframe.md                  # personal notes for topic 09
 ├── utils/
 │   ├── CustomReporter.ts       # hand-written Reporter implementation (see notes/05)
 │   └── selfHeal.ts             # types for self-healing locator reports (topic 22 preview)
+├── template/
+│   └── template.spec.ts        # boilerplate starter for a new spec file
 ├── docs/images/
 │   ├── playwright-architecture.png      # the diagram referenced earlier in this README
 │   ├── playwright-architecture.html
@@ -221,8 +243,8 @@ flowchart LR
 | 11 | JS Alerts | 23 | Advance PW Framework |
 | 12 | Handle SVG | | |
 
-**Progress so far:** topics 01–05 have real files (see `notes/` for a write-up of each);
-06–23 are created as empty folders, ready to fill in as the course reaches them.
+**Progress so far:** topics 01–09 have real files (see `notes/` for a write-up of each);
+10–23 are created as empty folders, ready to fill in as the course reaches them.
 
 The last two folders branch further:
 
