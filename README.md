@@ -183,9 +183,24 @@ LearningPlaywrightFundamental3X/
 │   │   └── file1.jpg, file2.jpg, testdata.txt, upload-sample.*  # fixture files used above
 │   ├── 15_File_Download/
 │   │   └── 266_FileDownload.spec.ts     # Promise.all([waitForEvent('download'), click()])
-│   ├── 16_Scroll_toElement/             # created, empty
-│   ├── 17_Expect_Assertions/            # created, empty
-│   ├── 18_Test_hooks/                   # created, empty
+│   ├── 16_Scroll_toElement/
+│   │   ├── 267_Scroll_Tc.spec.ts            # scrollIntoViewIfNeeded() vs window.scrollBy/scrollTo
+│   │   ├── 268_Lazy_Scroll.spec.ts          # expect.poll() while a lazy-loader grows the list
+│   │   └── 269_Abort_Signal_Scroll.spec.ts  # cancel a scroll wait early with an AbortSignal
+│   ├── 17_Expect_Assertions/
+│   │   ├── 270_Expect1.spec.ts      # value assertions — sync, no await
+│   │   ├── 271_Expect2.spec.ts      # locator assertions — async, auto-retrying
+│   │   ├── 272_Expect3.spec.ts      # expect.soft vs hard assertions, .not negation
+│   │   ├── 273_Expect4.spec.ts      # state assertions vs plain page.url()/page.title() checks
+│   │   └── Expect_CheatSheet.md     # full matcher reference, one example each
+│   ├── 18_Test_hooks/
+│   │   ├── 274_Test.spec.ts                 # in-body conditional skip/slow/fail/fixme
+│   │   ├── 276_TestStep.spec.ts             # test.step() — named, reportable phases
+│   │   ├── 277_TestHook.spec.ts             # beforeAll/beforeEach/afterEach/afterAll + testInfo
+│   │   ├── 278_TestDescribe.spec.ts         # describe.serial() vs independent parallel tests
+│   │   ├── 279_TestPriority.spec.ts         # describe.configure({mode:'serial'}) + @tag --grep
+│   │   ├── TestHooks.md                     # full test.* API reference
+│   │   └── Chromium_Arguments_List.md       # Chrome launch-flag reference
 │   ├── 19_Data_Driven_Testing/          # created, empty
 │   ├── 20_Page_Object_Model/            # created, empty
 │   ├── 21_Fixture/                      # created, empty
@@ -211,7 +226,10 @@ LearningPlaywrightFundamental3X/
 │   ├── 12_Handle_SVG.md                    # personal notes for topic 12
 │   ├── 13_Shadow_DOM.md                    # personal notes for topic 13
 │   ├── 14_FileUpload.md                    # personal notes for topic 14
-│   └── 15_File_Download.md                 # personal notes for topic 15
+│   ├── 15_File_Download.md                 # personal notes for topic 15
+│   ├── 16_Scroll_toElement.md              # personal notes for topic 16
+│   ├── 17_Expect_Assertions.md             # personal notes for topic 17 (points to the folder's own cheatsheet)
+│   └── 18_Test_hooks.md                    # personal notes for topic 18 (points to the folder's own cheatsheets)
 ├── test-data/
 │   └── uploads/                 # shared upload fixtures (sample.pdf/.jpg/.doc) — see notes/14
 ├── utils/
@@ -270,8 +288,9 @@ flowchart LR
 | 11 | JS Alerts | 23 | Advance PW Framework |
 | 12 | Handle SVG | | |
 
-**Progress so far:** topics 01–15 have real files (see `notes/` for a write-up of each);
-16–23 are created as empty folders, ready to fill in as the course reaches them.
+**Progress so far:** topics 01–18 have real files (see `notes/` for a write-up of each);
+19–21 and 23 are created as empty folders, and 22's subfolders are empty too — all ready to
+fill in as the course reaches them.
 
 The last two folders branch further:
 
