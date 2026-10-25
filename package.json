@@ -22,6 +22,7 @@
   "dependencies": {
     "allure-commandline": "^2.46.1",
     "dotenv": "^18.0.8",
+    "path": "^0.12.7",
     "save-dev": "^0.0.1-security"
   }
 }

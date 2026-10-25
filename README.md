@@ -106,7 +106,7 @@ npx playwright install
 
 ## 4. Project structure
 
-This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 09 now have real files in them:
+This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 15 now have real files in them:
 
 ```
 LearningPlaywrightFundamental3X/
@@ -158,12 +158,31 @@ LearningPlaywrightFundamental3X/
 │   │   ├── 246_Iframe_TestCase.spec.ts      # one iframe via frameLocator(), filling a form inside it
 │   │   ├── 247_Framework_TestCase.spec.ts   # named sibling frames + discovering all frames on a page
 │   │   └── 248_Nested_Iframe_TestCase.spec.ts  # frameLocator chaining — frames nested 3 levels deep
-│   ├── 10_Keyboard_Hover_Drag_Drop_Calender/  # created, empty
-│   ├── 11_JS_Alerts/                    # created, empty
-│   ├── 12_Handle_SVG/                   # created, empty
-│   ├── 13_Shadow_DOM/                   # created, empty
-│   ├── 14_FileUpload/                   # created, empty
-│   ├── 15_File_Download/                # created, empty
+│   ├── 10_Keyboard_Hover_Drag_Drop_Calender/
+│   │   ├── 249_TestCase.spec.ts              # page.keyboard.press/up/down
+│   │   ├── 250_Hover_TestCase.spec.ts        # .hover() to reveal a menu, then click
+│   │   ├── 251_Drag_Drop.spec.ts             # .dragTo() — the simple built-in drag-and-drop
+│   │   ├── 252_Advance_Drag_Drop.spec.ts     # manual page.mouse move/down/move/up sequence
+│   │   └── 253_Context_Drag_Drop.spec.ts     # right-click via .click({ button: 'right' })
+│   ├── 11_JS_Alerts/
+│   │   └── 254_JS_Alerts.spec.ts        # alert/confirm/prompt via the 'dialog' event
+│   ├── 12_Handle_SVG/
+│   │   ├── 255_SVG_Handling_Testcase.spec.ts       # clicking an inline <svg> icon
+│   │   ├── 256_SVG_Advance_TC.spec.ts              # clicking shapes, reading bar-chart attributes
+│   │   ├── 257_SVG_Maps_TC.spec.ts                 # XPath local-name() for the SVG namespace
+│   │   └── 258_257_SVG_Maps_Optimized_TC.spec.ts   # same map, plain CSS — no namespace workaround
+│   ├── 13_Shadow_DOM/
+│   │   └── 259_Shadow_DOM.spec.ts       # locators pierce shadow roots automatically
+│   ├── 14_FileUpload/
+│   │   ├── 260_FileUpload_TC.spec.ts                        # setInputFiles() with one real file
+│   │   ├── 261_FileUpload_Own_TC.spec.ts                    # same, on this course's own widget
+│   │   ├── 262_MultipleFileUpload_TC.spec.ts                # in-memory files: { name, mimeType, buffer }
+│   │   ├── 263_Multiple_FileUpload_Disk_TC.spec.ts          # multiple real files from disk
+│   │   ├── 264_MultipleMixed_FileUpload_MixedTypes_Disk_TC.spec.ts  # mixed file types in one upload
+│   │   ├── 265_FileUpload_OtherDirctory.spec.ts             # fixtures from a shared test-data/ folder
+│   │   └── file1.jpg, file2.jpg, testdata.txt, upload-sample.*  # fixture files used above
+│   ├── 15_File_Download/
+│   │   └── 266_FileDownload.spec.ts     # Promise.all([waitForEvent('download'), click()])
 │   ├── 16_Scroll_toElement/             # created, empty
 │   ├── 17_Expect_Assertions/            # created, empty
 │   ├── 18_Test_hooks/                   # created, empty
@@ -186,7 +205,15 @@ LearningPlaywrightFundamental3X/
 │   ├── 06_Multiple_Element_Filter.md       # personal notes for topic 06
 │   ├── 07_WebTables.md                     # personal notes for topic 07
 │   ├── 08_Web_Select_Frames_Iframe.md      # personal notes for topic 08
-│   └── 09_Frame_Iframe.md                  # personal notes for topic 09
+│   ├── 09_Frame_Iframe.md                  # personal notes for topic 09
+│   ├── 10_Keyboard_Hover_Drag_Drop_Calender.md  # personal notes for topic 10
+│   ├── 11_JS_Alerts.md                     # personal notes for topic 11
+│   ├── 12_Handle_SVG.md                    # personal notes for topic 12
+│   ├── 13_Shadow_DOM.md                    # personal notes for topic 13
+│   ├── 14_FileUpload.md                    # personal notes for topic 14
+│   └── 15_File_Download.md                 # personal notes for topic 15
+├── test-data/
+│   └── uploads/                 # shared upload fixtures (sample.pdf/.jpg/.doc) — see notes/14
 ├── utils/
 │   ├── CustomReporter.ts       # hand-written Reporter implementation (see notes/05)
 │   └── selfHeal.ts             # types for self-healing locator reports (topic 22 preview)
@@ -243,8 +270,8 @@ flowchart LR
 | 11 | JS Alerts | 23 | Advance PW Framework |
 | 12 | Handle SVG | | |
 
-**Progress so far:** topics 01–09 have real files (see `notes/` for a write-up of each);
-10–23 are created as empty folders, ready to fill in as the course reaches them.
+**Progress so far:** topics 01–15 have real files (see `notes/` for a write-up of each);
+16–23 are created as empty folders, ready to fill in as the course reaches them.
 
 The last two folders branch further:
 
