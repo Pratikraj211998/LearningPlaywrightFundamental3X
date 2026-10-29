@@ -106,7 +106,7 @@ npx playwright install
 
 ## 4. Project structure
 
-This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 15 now have real files in them:
+This is the actual state of the repo as of now — folders for every curriculum topic (see section 5) have been created ahead of time, and topics 01 through 19 now have real files in them:
 
 ```
 LearningPlaywrightFundamental3X/
@@ -201,7 +201,21 @@ LearningPlaywrightFundamental3X/
 │   │   ├── 279_TestPriority.spec.ts         # describe.configure({mode:'serial'}) + @tag --grep
 │   │   ├── TestHooks.md                     # full test.* API reference
 │   │   └── Chromium_Arguments_List.md       # Chrome launch-flag reference
-│   ├── 19_Data_Driven_Testing/          # created, empty
+│   ├── 19_Data_Driven_Testing/
+│   │   ├── 279_DDT.spec.ts                  # import a flat JSON object directly
+│   │   ├── 280_Users.json
+│   │   ├── 281_TestData.json                # array of objects w/ nested object + array (unused by a spec yet)
+│   │   ├── 282_Login_DDT.spec.ts            # two named cases (validUser/invalidUser), not looped
+│   │   ├── 283_Read_Write_FileSystem.ts     # fs.readFileSync/writeFileSync + JSON.parse/stringify
+│   │   ├── 284_DDT_JSON_Array.spec.ts       # the core pattern: loop an array → one test() per row
+│   │   ├── 285_DDT_CSV.spec.ts              # same pattern from CSV — ⚠️ hand-rolled parser has a real bug
+│   │   ├── 286_JSON_DDT.spec.ts             # same pattern, test.afterEach logs each row's status
+│   │   ├── 287_DDT_EXCEL.spec.ts            # same dataset, async reader → beforeAll + test.step() per row
+│   │   ├── 288_DDT_YAML.spec.ts             # same dataset, sync reader → back to one test() per row
+│   │   ├── 289_DDT_MYSQL.spec.ts            # same dataset from MySQL; test.skip() when unconfigured
+│   │   ├── 290_DDT_Faker.spec.ts            # no fixture — @faker-js/faker generates rows fresh each run
+│   │   ├── test-data/                       # login-data.csv/.yaml/.xlsx, registration-data.json, seed.sql, login.json
+│   │   └── util/                            # csvReader.ts, yamlReader.ts, excelReader.ts, dbReader.ts, generateExcel.js
 │   ├── 20_Page_Object_Model/            # created, empty
 │   ├── 21_Fixture/                      # created, empty
 │   ├── 22_Misc_AI_Concepts/
@@ -229,7 +243,8 @@ LearningPlaywrightFundamental3X/
 │   ├── 15_File_Download.md                 # personal notes for topic 15
 │   ├── 16_Scroll_toElement.md              # personal notes for topic 16
 │   ├── 17_Expect_Assertions.md             # personal notes for topic 17 (points to the folder's own cheatsheet)
-│   └── 18_Test_hooks.md                    # personal notes for topic 18 (points to the folder's own cheatsheets)
+│   ├── 18_Test_hooks.md                    # personal notes for topic 18 (points to the folder's own cheatsheets)
+│   └── 19_Data_Driven_Testing.md           # personal notes for topic 19 (sync vs async data sources)
 ├── test-data/
 │   └── uploads/                 # shared upload fixtures (sample.pdf/.jpg/.doc) — see notes/14
 ├── utils/
@@ -288,8 +303,8 @@ flowchart LR
 | 11 | JS Alerts | 23 | Advance PW Framework |
 | 12 | Handle SVG | | |
 
-**Progress so far:** topics 01–18 have real files (see `notes/` for a write-up of each);
-19–21 and 23 are created as empty folders, and 22's subfolders are empty too — all ready to
+**Progress so far:** topics 01–19 have real files (see `notes/` for a write-up of each);
+20–21 and 23 are created as empty folders, and 22's subfolders are empty too — all ready to
 fill in as the course reaches them.
 
 The last two folders branch further:
