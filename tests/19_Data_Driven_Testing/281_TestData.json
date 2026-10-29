@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Dhana",
+    "experience": 5,
+    "isTrainer": true,
+    "middleName": "",
+    "skills": [
+      "JavaScript",
+      "Playwright",
+      "Manual Testing"
+    ],
+    "address": {
+      "city": "Coimbatore",
+      "country": "India"
+    }
+  }
+]
